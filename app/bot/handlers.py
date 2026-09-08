@@ -1,0 +1,474 @@
+"""Telegram bot command, callback, and text message handlers."""
+
+import asyncio
+import logging
+from typing import List, Optional
+
+from aiogram import F, Router
+from aiogram.enums import ChatAction, ParseMode
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.filters import Command, CommandStart
+from aiogram.types import CallbackQuery, Message
+
+from app.ai.gemini import gemini_service
+from app.bot.keyboards import get_main_inline_keyboard, get_new_chat_confirm_keyboard
+from app.config import settings
+from app.services.message_service import MessageService
+from app.services.user_service import UserService
+
+logger = logging.getLogger(__name__)
+
+router = Router(name="bot_router")
+
+
+# ---------------------------------------------------------------------------
+# Utility Functions
+# ---------------------------------------------------------------------------
+
+
+def split_message(text: str, max_chunk_size: int = 4000) -> List[str]:
+    """
+    Split long text into safe chunks under Telegram's 4096 character limit.
+
+    Attempts to split at paragraphs (double newlines) or lines to preserve readability.
+    """
+    if not text:
+        return []
+
+    if len(text) <= max_chunk_size:
+        return [text]
+
+    chunks: List[str] = []
+    lines = text.split("\n")
+    current_chunk = ""
+
+    for line in lines:
+        # If adding this line exceeds the limit
+        if len(current_chunk) + len(line) + 1 > max_chunk_size:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+
+            # If a single line is longer than max_chunk_size, break it arbitrarily
+            if len(line) > max_chunk_size:
+                for i in range(0, len(line), max_chunk_size):
+                    chunk_part = line[i : i + max_chunk_size]
+                    if i + max_chunk_size >= len(line):
+                        current_chunk = chunk_part
+                    else:
+                        chunks.append(chunk_part)
+            else:
+                current_chunk = line
+        else:
+            if current_chunk:
+                current_chunk += "\n" + line
+            else:
+                current_chunk = line
+
+    if current_chunk and current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks
+
+
+async def send_safe_message(
+    message: Message,
+    text: str,
+    reply_markup: Optional[object] = None,
+) -> None:
+    """
+    Send text chunks safely to Telegram, falling back to plain text if Markdown fails.
+    """
+    chunks = split_message(text)
+    for index, chunk in enumerate(chunks):
+        markup = reply_markup if index == len(chunks) - 1 else None
+        try:
+            # First attempt: Markdown formatting
+            await message.answer(
+                chunk,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=markup,
+            )
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "Markdown parsing failed (%s). Retrying as plain text.",
+                exc,
+            )
+            # Fallback attempt: Plain text
+            await message.answer(
+                chunk,
+                parse_mode=None,
+                reply_markup=markup,
+            )
+
+
+async def send_typing_action_loop(bot, chat_id: int, stop_event: asyncio.Event) -> None:
+    """Periodically trigger the 'typing...' chat action while AI generates content."""
+    while not stop_event.is_set():
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        except Exception:
+            pass  # Ignore transient network errors during typing indicator
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=4.5)
+        except asyncio.TimeoutError:
+            continue
+
+
+# ---------------------------------------------------------------------------
+# Command Handlers
+# ---------------------------------------------------------------------------
+
+
+@router.message(CommandStart())
+async def handle_start(message: Message) -> None:
+    """Handle /start command with a friendly bilingual welcome."""
+    first_name = message.from_user.first_name if message.from_user else "Friend"
+    welcome_text = (
+        f"👋 **Hello, {first_name}!**\n\n"
+        "I am your personal **AI Assistant**, powered by Google Gemini.\n\n"
+        "✨ **What I can do:**\n"
+        "• 💬 Chat naturally in **English** and **Khmer (ភាសាខ្មែរ)**\n"
+        "• 🧠 Remember recent conversation context\n"
+        "• 💡 Answer questions, write code, brainstorm, and explain topics\n"
+        "• ⚡ Provide fast, direct, and helpful responses\n\n"
+        "Simply send me a message to begin, or use the menu below!"
+    )
+    await message.answer(
+        welcome_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_main_inline_keyboard(),
+    )
+
+
+@router.message(Command("help"))
+async def handle_help(message: Message) -> None:
+    """Handle /help command explaining available commands and tips."""
+    help_text = (
+        "📖 **How to use the Telegram AI Assistant:**\n\n"
+        "**Available Commands:**\n"
+        "• `/start` — Start the bot and show main menu\n"
+        "• `/help` — Show this guide\n"
+        "• `/newchat` — Clear conversation context and start fresh\n"
+        "• `/memory` — Check conversation memory status\n"
+        "• `/settings` — View user and model settings\n"
+        "• `/about` — View bot details and architecture\n\n"
+        "**Conversation Tips:**\n"
+        "• Type any message or question directly in the chat.\n"
+        "• You can speak in **Khmer** or **English** — I will automatically respond in your language.\n"
+        "• Use `/newchat` when changing topics to clear previous context.\n"
+    )
+    await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
+
+
+@router.message(Command("newchat"))
+async def handle_newchat(message: Message) -> None:
+    """Handle /newchat command to clear memory."""
+    if not message.from_user:
+        return
+    deleted_count = await MessageService.clear_conversation(message.from_user.id)
+    text = (
+        "🧹 **Conversation Context Cleared!**\n\n"
+        f"Removed {deleted_count} previous message turns.\n"
+        "We now have a clean slate. What would you like to discuss next?"
+    )
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+
+
+@router.message(Command("memory"))
+async def handle_memory(message: Message) -> None:
+    """Handle /memory command displaying context depth."""
+    if not message.from_user:
+        return
+    history = await MessageService.get_conversation_history(message.from_user.id)
+    text = (
+        "🧠 **Conversation Memory Status:**\n\n"
+        f"• Status: **Active** ✅\n"
+        f"• Current Context: **{len(history)}** stored messages\n"
+        f"• Max Memory Window: **{settings.MAX_HISTORY_MESSAGES}** recent messages\n\n"
+        "_Note: Recent messages are used to provide contextual multi-turn answers._\n"
+        "_Use `/newchat` anytime to clear your context._"
+    )
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+
+
+@router.message(Command("settings"))
+async def handle_settings(message: Message) -> None:
+    """Handle /settings command."""
+    user_id = message.from_user.id if message.from_user else 0
+    username = f"@{message.from_user.username}" if message.from_user and message.from_user.username else "None"
+    is_admin_str = "Yes 👑" if settings.is_admin(user_id) else "No"
+
+    text = (
+        "⚙️ **Assistant Settings & Profile:**\n\n"
+        f"• **User ID:** `{user_id}`\n"
+        f"• **Username:** {username}\n"
+        f"• **AI Model:** `{settings.GEMINI_MODEL}`\n"
+        f"• **Max Context History:** `{settings.MAX_HISTORY_MESSAGES}` messages\n"
+        f"• **Rate Limit:** `{settings.RATE_LIMIT_MESSAGES_PER_MINUTE}` requests / min\n"
+        f"• **Admin Privileges:** {is_admin_str}\n\n"
+        "_Tip: To reset your current conversation, use `/newchat`._"
+    )
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+
+
+@router.message(Command("about"))
+async def handle_about(message: Message) -> None:
+    """Handle /about command."""
+    about_text = (
+        "ℹ️ **About Telegram AI Assistant:**\n\n"
+        "A production-ready Telegram AI assistant built with modern Python technologies:\n\n"
+        "• **Framework:** `aiogram 3.x` (Async Telegram Bot API)\n"
+        "• **AI Engine:** Google Gemini (`google-genai` SDK)\n"
+        "• **Model:** `gemini-3.7-flash`\n"
+        "• **Database:** SQLite with Async SQLAlchemy 2.0\n"
+        "• **Features:** Multi-turn Memory, Auto Khmer/English Detection, Safe Markdown, Rate Limiting.\n\n"
+        "🚀 _Engineered for reliability, privacy, and speed._"
+    )
+    await message.answer(about_text, parse_mode=ParseMode.MARKDOWN)
+
+
+# ---------------------------------------------------------------------------
+# Admin Handlers
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("stats"))
+async def handle_stats(message: Message) -> None:
+    """Admin command to view bot usage statistics."""
+    if not message.from_user or not settings.is_admin(message.from_user.id):
+        await message.answer("⛔ Access denied. This command is restricted to administrators.")
+        return
+
+    stats = await UserService.get_system_stats()
+    text = (
+        "📊 **Bot Administration Statistics:**\n\n"
+        f"• 👥 **Total Registered Users:** {stats['total_users']}\n"
+        f"• 💬 **Total Messages Stored:** {stats['total_messages']}\n"
+        f"• 🔥 **Active Users (Last 24h):** {stats['active_users_24h']}\n"
+        f"• 🤖 **Active Model:** `{settings.GEMINI_MODEL}`\n"
+    )
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+
+
+@router.message(Command("broadcast"))
+async def handle_broadcast(message: Message) -> None:
+    """Admin command to broadcast announcements to all users."""
+    if not message.from_user or not settings.is_admin(message.from_user.id):
+        await message.answer("⛔ Access denied. This command is restricted to administrators.")
+        return
+
+    # Extract broadcast message text after '/broadcast '
+    parts = message.text.split(maxsplit=1) if message.text else []
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "⚠️ Please provide a message to broadcast.\n"
+            "Usage: `/broadcast Your message here`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    broadcast_text = parts[1].strip()
+    recipient_ids = await UserService.get_broadcast_recipients()
+
+    if not recipient_ids:
+        await message.answer("ℹ️ No registered users found in the database.")
+        return
+
+    status_msg = await message.answer(
+        f"🚀 Starting broadcast to {len(recipient_ids)} users..."
+    )
+
+    sent_count = 0
+    failed_count = 0
+
+    for uid in recipient_ids:
+        try:
+            await message.bot.send_message(
+                chat_id=uid,
+                text=f"📢 **Announcement:**\n\n{broadcast_text}",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            sent_count += 1
+            await asyncio.sleep(0.05)  # Telegram API flood control
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+            logger.warning("Failed to broadcast to user %d: %s", uid, exc)
+            failed_count += 1
+        except Exception as exc:
+            logger.error("Unexpected broadcast error for user %d: %s", uid, exc)
+            failed_count += 1
+
+    await status_msg.edit_text(
+        f"✅ **Broadcast Completed!**\n\n"
+        f"• Delivered: **{sent_count}**\n"
+        f"• Failed/Blocked: **{failed_count}**\n"
+        f"• Total: **{len(recipient_ids)}**",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Callback Query Handlers
+# ---------------------------------------------------------------------------
+
+
+@router.callback_query(F.data == "btn_ask_ai")
+async def callback_ask_ai(callback: CallbackQuery) -> None:
+    """Prompt user to type a message."""
+    await callback.answer()
+    if callback.message and isinstance(callback.message, Message):
+        await callback.message.answer(
+            "💬 You can ask me anything! Simply type your question below in **English** or **Khmer**.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+
+@router.callback_query(F.data == "btn_new_chat")
+async def callback_new_chat(callback: CallbackQuery) -> None:
+    """Prompt confirmation to start a new chat."""
+    await callback.answer()
+    if callback.message and isinstance(callback.message, Message):
+        await callback.message.answer(
+            "Are you sure you want to clear your conversation memory and start a new chat?",
+            reply_markup=get_new_chat_confirm_keyboard(),
+        )
+
+
+@router.callback_query(F.data == "confirm_new_chat")
+async def callback_confirm_new_chat(callback: CallbackQuery) -> None:
+    """Confirm and execute conversation wipe."""
+    await callback.answer()
+    if callback.from_user:
+        await MessageService.clear_conversation(callback.from_user.id)
+    if callback.message and isinstance(callback.message, Message):
+        await callback.message.edit_text(
+            "🧹 **Conversation Context Cleared!**\n\n"
+            "You can start a fresh conversation now.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+
+@router.callback_query(F.data == "cancel_new_chat")
+async def callback_cancel_new_chat(callback: CallbackQuery) -> None:
+    """Cancel conversation wipe."""
+    await callback.answer()
+    if callback.message and isinstance(callback.message, Message):
+        await callback.message.edit_text(
+            "👌 Reset cancelled. Your conversation history is preserved."
+        )
+
+
+@router.callback_query(F.data == "btn_settings")
+async def callback_settings(callback: CallbackQuery) -> None:
+    """Show settings from inline button."""
+    await callback.answer()
+    if callback.message and isinstance(callback.message, Message):
+        user_id = callback.from_user.id if callback.from_user else 0
+        is_admin_str = "Yes 👑" if settings.is_admin(user_id) else "No"
+        text = (
+            "⚙️ **Assistant Settings & Profile:**\n\n"
+            f"• **User ID:** `{user_id}`\n"
+            f"• **AI Model:** `{settings.GEMINI_MODEL}`\n"
+            f"• **Max Context History:** `{settings.MAX_HISTORY_MESSAGES}` messages\n"
+            f"• **Rate Limit:** `{settings.RATE_LIMIT_MESSAGES_PER_MINUTE}` requests / min\n"
+            f"• **Admin Privileges:** {is_admin_str}\n"
+        )
+        await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
+
+
+@router.callback_query(F.data == "btn_about")
+async def callback_about(callback: CallbackQuery) -> None:
+    """Show about information from inline button."""
+    await callback.answer()
+    if callback.message and isinstance(callback.message, Message):
+        about_text = (
+            "ℹ️ **About Telegram AI Assistant:**\n\n"
+            "• **Framework:** `aiogram 3.x`\n"
+            "• **AI Engine:** Google Gemini (`google-genai` SDK)\n"
+            "• **Model:** `gemini-3.7-flash`\n"
+            "• **Database:** SQLite with Async SQLAlchemy 2.0\n"
+            "• **Features:** Multi-turn Memory, Bilingual Khmer/English, Safe Markdown, Rate Limiting.\n"
+        )
+        await callback.message.answer(about_text, parse_mode=ParseMode.MARKDOWN)
+
+
+# ---------------------------------------------------------------------------
+# General Text Message Handler
+# ---------------------------------------------------------------------------
+
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def handle_user_text_message(message: Message) -> None:
+    """
+    Handle natural language user input:
+    1. Persist user message to DB
+    2. Retrieve conversation context
+    3. Trigger typing status indicator
+    4. Call Gemini AI service
+    5. Save assistant response to DB
+    6. Send formatted response to user
+    """
+    if not message.text or not message.from_user:
+        return
+
+    user_id = message.from_user.id
+    user_prompt = message.text.strip()
+
+    # 1. Persist user message
+    try:
+        await MessageService.save_user_message(telegram_id=user_id, content=user_prompt)
+    except Exception as exc:
+        logger.error("Failed to save incoming user message: %s", exc)
+
+    # 2. Fetch conversation history for multi-turn context
+    history = []
+    try:
+        history = await MessageService.get_conversation_history(
+            telegram_id=user_id,
+            limit=settings.MAX_HISTORY_MESSAGES,
+        )
+        # Exclude the current message that was just saved from the history list to prevent duplication
+        if history and history[-1].role == "user" and history[-1].content == user_prompt:
+            history = list(history[:-1])
+    except Exception as exc:
+        logger.error("Failed to fetch conversation history: %s", exc)
+
+    # 3. Start typing indicator background loop
+    stop_typing_event = asyncio.Event()
+    typing_task = asyncio.create_task(
+        send_typing_action_loop(
+            bot=message.bot,
+            chat_id=message.chat.id,
+            stop_event=stop_typing_event,
+        )
+    )
+
+    try:
+        # 4. Generate AI response via Gemini
+        ai_response = await gemini_service.generate_response(
+            prompt=user_prompt,
+            history_messages=history,
+        )
+
+        # 5. Persist assistant response
+        try:
+            await MessageService.save_assistant_message(
+                telegram_id=user_id,
+                content=ai_response,
+            )
+        except Exception as exc:
+            logger.error("Failed to save assistant response: %s", exc)
+
+        # 6. Send safe message chunks
+        await send_safe_message(message=message, text=ai_response)
+
+    except Exception as exc:
+        logger.exception("Unexpected error while generating AI response: %s", exc)
+        await message.answer(
+            "⚠️ I encountered an unexpected error while processing your request. Please try again in a moment."
+        )
+
+    finally:
+        # Stop typing indicator loop
+        stop_typing_event.set()
+        await typing_task
