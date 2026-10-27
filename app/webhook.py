@@ -45,9 +45,8 @@ async def lifespan(app: FastAPI):
 
     webhook_url = render_url + WEBHOOK_PATH
 
-    # Webhook and polling are mutually exclusive. Removing any stale
-    # webhook first also makes switching back to this deployment deterministic.
-    await bot.delete_webhook(drop_pending_updates=False)
+    # Webhook and polling are mutually exclusive. Registering the webhook
+    # here makes the current deployment the single Telegram update consumer.
     await bot.set_webhook(
         url=webhook_url,
         allowed_updates=dp.resolve_used_update_types(),
@@ -60,10 +59,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        try:
-            await bot.delete_webhook(drop_pending_updates=False)
-        except Exception:
-            logger.exception("Failed to remove Telegram webhook during shutdown")
+        # Do not delete the webhook on SIGTERM: Render starts the new instance
+        # before stopping the old one during a zero-downtime deployment.
         await bot.session.close()
         await close_db()
 
