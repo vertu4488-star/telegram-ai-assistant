@@ -15,8 +15,4 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-# This repository is retained as the legacy project. The production bot
-# now runs from new-iphone-service using Telegram webhooks. Keep this
-# Render service alive without polling Telegram, so it cannot create a
-# second getUpdates consumer for the bot token.
-CMD ["sh", "-c", "python -m http.server ${PORT:-10000} --bind 0.0.0.0"]
+CMD ["sh", "-c", "uvicorn app.webhook:app --host 0.0.0.0 --port ${PORT:-10000}"]
