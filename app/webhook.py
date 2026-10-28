@@ -2,6 +2,7 @@
 
 import os
 import logging
+import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -97,3 +98,29 @@ async def telegram_webhook(request: Request):
     except Exception as exc:
         logger.exception("Telegram webhook update failed")
         raise HTTPException(status_code=400, detail="Invalid Telegram update") from exc
+
+
+@app.post("/news/publish-next")
+async def publish_next_channel_news(request: Request):
+    """Authenticated endpoint invoked by the Render cron scheduler."""
+    configured_secret = settings.NEWS_PUBLISH_SECRET
+    supplied_secret = request.headers.get("X-News-Publish-Secret", "")
+    if not configured_secret or not hmac.compare_digest(configured_secret, supplied_secret):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    slot_key = str(payload.get("slot_key") or request.headers.get("X-News-Slot", "")).strip()
+    if not slot_key or len(slot_key) > 80:
+        raise HTTPException(status_code=400, detail="Missing or invalid slot_key")
+
+    from app.news.publisher import publish_next_news
+    try:
+        result = await publish_next_news(request.app.state.bot, slot_key)
+        return result
+    except Exception as exc:
+        logger.exception("Scheduled channel news publication failed for slot %s", slot_key)
+        raise HTTPException(status_code=500, detail="News publication failed") from exc
