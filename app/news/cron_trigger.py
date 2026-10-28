@@ -5,7 +5,8 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -20,8 +21,9 @@ def main() -> int:
         logger.error("NEWS_TRIGGER_URL and NEWS_PUBLISH_SECRET must be configured")
         return 2
 
-    now = datetime.now(timezone.utc)
-    slot_key = now.strftime("%Y-%m-%dT%H")
+    now = datetime.now(ZoneInfo("Asia/Novosibirsk"))
+    slot_hour = 10 if now.hour < 12 else 15 if now.hour < 17 else 20
+    slot_key = f"{now:%Y-%m-%d}-{slot_hour:02d}"
     payload = json.dumps({"slot_key": slot_key}).encode("utf-8")
     request = Request(
         f"{base_url}/news/publish-next",
