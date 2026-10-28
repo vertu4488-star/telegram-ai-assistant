@@ -50,9 +50,8 @@ async def lifespan(app: FastAPI):
 
     await setup_bot_commands(bot)
 
-    from app.news.publisher import run_news_scheduler
-    news_scheduler_task = asyncio.create_task(run_news_scheduler(bot), name="channel-news-scheduler")
-    app.state.news_scheduler_task = news_scheduler_task
+    # Scheduled publishing is handled only by the dedicated Render Cron Job.
+    # Do not start a second in-process scheduler: overlapping deploys can duplicate posts.
 
     render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
     if not render_url:
@@ -74,13 +73,6 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        scheduler_task = getattr(app.state, "news_scheduler_task", None)
-        if scheduler_task is not None:
-            scheduler_task.cancel()
-            try:
-                await scheduler_task
-            except asyncio.CancelledError:
-                pass
         # Do not delete the webhook on SIGTERM: Render starts the new instance
         # before stopping the old one during a zero-downtime deployment.
         await bot.session.close()
