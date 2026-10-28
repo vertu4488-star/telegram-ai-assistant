@@ -7,12 +7,12 @@ from aiogram.types import BotCommand, BotCommandScopeDefault
 logger = logging.getLogger(__name__)
 
 DEFAULT_COMMANDS = [
-    BotCommand(command="start", description="🚀 Start the bot & show menu"),
-    BotCommand(command="help", description="❓ Help & how to use"),
-    BotCommand(command="newchat", description="🆕 Clear memory & start fresh chat"),
-    BotCommand(command="memory", description="🧠 Conversation memory status"),
-    BotCommand(command="settings", description="⚙️ View assistant settings"),
-    BotCommand(command="about", description="ℹ️ About this bot"),
+    BotCommand(command="start", description="🚀 Запустить бота и открыть меню"),
+    BotCommand(command="help", description="❓ Помощь и инструкция"),
+    BotCommand(command="newchat", description="🆕 Очистить историю и начать заново"),
+    BotCommand(command="memory", description="🧠 Состояние памяти диалога"),
+    BotCommand(command="settings", description="⚙️ Настройки помощника"),
+    BotCommand(command="about", description="ℹ️ О боте"),
 ]
 
 
