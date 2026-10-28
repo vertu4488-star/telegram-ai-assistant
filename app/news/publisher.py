@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 from aiogram import Bot
@@ -311,3 +312,31 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
         "source": article.source,
         "evergreen": article.is_evergreen,
     }
+
+
+async def run_news_scheduler(bot: Bot) -> None:
+    """Best-effort in-process scheduler; Render Cron can call the same publisher reliably."""
+    timezone_local = ZoneInfo("Asia/Novosibirsk")
+    scheduled_hours = (10, 15, 20)
+    logger.info("In-process news scheduler started (Asia/Novosibirsk, slots=%s)", scheduled_hours)
+    while True:
+        try:
+            now = datetime.now(timezone_local)
+            due_hours = [hour for hour in scheduled_hours if now.hour >= hour]
+            if due_hours:
+                # Publish only the latest due slot after a wake/restart, avoiding a burst of backlogged posts.
+                hour = due_hours[-1]
+                slot_key = f"{now:%Y-%m-%d}-{hour:02d}"
+                if await _published_slot(slot_key) is None:
+                    logger.info("News slot due: %s", slot_key)
+                    try:
+                        await publish_next_news(bot, slot_key)
+                    except Exception:
+                        logger.exception("Scheduled news post failed for slot %s; will retry", slot_key)
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            logger.info("In-process news scheduler stopped")
+            raise
+        except Exception:
+            logger.exception("Unexpected news scheduler error")
+            await asyncio.sleep(60)
