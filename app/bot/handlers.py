@@ -385,12 +385,12 @@ async def callback_about(callback: CallbackQuery) -> None:
     await callback.answer()
     if callback.message and isinstance(callback.message, Message):
         about_text = (
-            "ℹ️ **About Telegram AI Assistant:**\n\n"
-            "• **Framework:** `aiogram 3.x`\n"
-            "• **AI Engine:** Google Gemini (`google-genai` SDK)\n"
-            "• **Model:** `gemini-3.7-flash`\n"
-            "• **Database:** SQLite with Async SQLAlchemy 2.0\n"
-            "• **Features:** Multi-turn Memory, Bilingual Khmer/English, Safe Markdown, Rate Limiting.\n"
+            "ℹ️ **О помощнике New iPhone Service:**\n\n"
+            "• **Платформа:** `aiogram 3.x`\n"
+            "• **ИИ:** Google Gemini (`google-genai` SDK)\n"
+            f"• **Модель:** `{settings.GEMINI_MODEL}`\n"
+            "• **База данных:** SQLite и Async SQLAlchemy 2.0\n"
+            "• **Возможности:** память диалога, безопасное форматирование и ограничение частоты запросов.\n"
         )
         await callback.message.answer(about_text, parse_mode=ParseMode.MARKDOWN)
 
