@@ -27,8 +27,8 @@ def get_new_chat_confirm_keyboard() -> InlineKeyboardMarkup:
     """Return confirmation keyboard before wiping conversation history."""
     buttons = [
         [
-            InlineKeyboardButton(text="✅ Yes, start new chat", callback_data="confirm_new_chat"),
-            InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_new_chat"),
+            InlineKeyboardButton(text="✅ Да, начать новый диалог", callback_data="confirm_new_chat"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_new_chat"),
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
