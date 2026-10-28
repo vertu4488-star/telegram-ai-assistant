@@ -165,14 +165,14 @@ async def handle_help(message: Message) -> None:
 
 @router.message(Command("newchat"))
 async def handle_newchat(message: Message) -> None:
-    """Handle /newchat command to clear memory."""
+    """Обработчик /newchat для очистки истории."""
     if not message.from_user:
         return
     deleted_count = await MessageService.clear_conversation(message.from_user.id)
     text = (
-        "🧹 **Conversation Context Cleared!**\n\n"
-        f"Removed {deleted_count} previous message turns.\n"
-        "We now have a clean slate. What would you like to discuss next?"
+        "🧹 **История диалога очищена!**\n\n"
+        f"Удалено сообщений из истории: {deleted_count}.\n"
+        "Можно начать новую тему. Что обсудим?"
     )
     await message.answer(text, parse_mode=ParseMode.MARKDOWN)
 
@@ -184,12 +184,12 @@ async def handle_memory(message: Message) -> None:
         return
     history = await MessageService.get_conversation_history(message.from_user.id)
     text = (
-        "🧠 **Conversation Memory Status:**\n\n"
-        f"• Status: **Active** ✅\n"
-        f"• Current Context: **{len(history)}** stored messages\n"
-        f"• Max Memory Window: **{settings.MAX_HISTORY_MESSAGES}** recent messages\n\n"
-        "_Note: Recent messages are used to provide contextual multi-turn answers._\n"
-        "_Use `/newchat` anytime to clear your context._"
+        "🧠 **Состояние памяти диалога:**\n\n"
+        f"• Статус: **Активна** ✅\n"
+        f"• Сообщений в контексте: **{len(history)}**\n"
+        f"• Максимальный размер истории: **{settings.MAX_HISTORY_MESSAGES}** сообщений\n\n"
+        "_Последние сообщения используются для сохранения контекста диалога._\n"
+        "_Используйте `/newchat`, чтобы очистить историю._"
     )
     await message.answer(text, parse_mode=ParseMode.MARKDOWN)
 
@@ -198,18 +198,18 @@ async def handle_memory(message: Message) -> None:
 async def handle_settings(message: Message) -> None:
     """Handle /settings command."""
     user_id = message.from_user.id if message.from_user else 0
-    username = f"@{message.from_user.username}" if message.from_user and message.from_user.username else "None"
-    is_admin_str = "Yes 👑" if settings.is_admin(user_id) else "No"
+    username = f"@{message.from_user.username}" if message.from_user and message.from_user.username else "Не указан"
+    is_admin_str = "Да 👑" if settings.is_admin(user_id) else "Нет"
 
     text = (
-        "⚙️ **Assistant Settings & Profile:**\n\n"
-        f"• **User ID:** `{user_id}`\n"
-        f"• **Username:** {username}\n"
-        f"• **AI Model:** `{settings.GEMINI_MODEL}`\n"
-        f"• **Max Context History:** `{settings.MAX_HISTORY_MESSAGES}` messages\n"
-        f"• **Rate Limit:** `{settings.RATE_LIMIT_MESSAGES_PER_MINUTE}` requests / min\n"
-        f"• **Admin Privileges:** {is_admin_str}\n\n"
-        "_Tip: To reset your current conversation, use `/newchat`._"
+        "⚙️ **Настройки помощника:**\n\n"
+        f"• **ID пользователя:** `{user_id}`\n"
+        f"• **Имя пользователя:** {username}\n"
+        f"• **Модель ИИ:** `{settings.GEMINI_MODEL}`\n"
+        f"• **Максимальная история контекста:** `{settings.MAX_HISTORY_MESSAGES}` сообщений\n"
+        f"• **Лимит запросов:** `{settings.RATE_LIMIT_MESSAGES_PER_MINUTE}` запросов в минуту\n"
+        f"• **Права администратора:** {is_admin_str}\n\n"
+        "_Чтобы очистить историю и начать заново, используйте `/newchat`._"
     )
     await message.answer(text, parse_mode=ParseMode.MARKDOWN)
 
@@ -239,7 +239,7 @@ async def handle_about(message: Message) -> None:
 async def handle_stats(message: Message) -> None:
     """Admin command to view bot usage statistics."""
     if not message.from_user or not settings.is_admin(message.from_user.id):
-        await message.answer("⛔ Access denied. This command is restricted to administrators.")
+        await message.answer("⛔ Доступ запрещён. Эта команда доступна только администратору.")
         return
 
     stats = await UserService.get_system_stats()
@@ -257,7 +257,7 @@ async def handle_stats(message: Message) -> None:
 async def handle_broadcast(message: Message) -> None:
     """Admin command to broadcast announcements to all users."""
     if not message.from_user or not settings.is_admin(message.from_user.id):
-        await message.answer("⛔ Access denied. This command is restricted to administrators.")
+        await message.answer("⛔ Доступ запрещён. Эта команда доступна только администратору.")
         return
 
     # Extract broadcast message text after '/broadcast '
@@ -265,7 +265,7 @@ async def handle_broadcast(message: Message) -> None:
     if len(parts) < 2 or not parts[1].strip():
         await message.answer(
             "⚠️ Please provide a message to broadcast.\n"
-            "Usage: `/broadcast Your message here`",
+            "Пример: `/broadcast Текст сообщения`",
             parse_mode=ParseMode.MARKDOWN,
         )
         return
@@ -274,11 +274,11 @@ async def handle_broadcast(message: Message) -> None:
     recipient_ids = await UserService.get_broadcast_recipients()
 
     if not recipient_ids:
-        await message.answer("ℹ️ No registered users found in the database.")
+        await message.answer("ℹ️ В базе пока нет зарегистрированных пользователей.")
         return
 
     status_msg = await message.answer(
-        f"🚀 Starting broadcast to {len(recipient_ids)} users..."
+        f"🚀 Начинаю рассылку для пользователей: {len(recipient_ids)}..."
     )
 
     sent_count = 0
@@ -304,7 +304,7 @@ async def handle_broadcast(message: Message) -> None:
         f"✅ **Broadcast Completed!**\n\n"
         f"• Delivered: **{sent_count}**\n"
         f"• Failed/Blocked: **{failed_count}**\n"
-        f"• Total: **{len(recipient_ids)}**",
+        f"• Всего: **{len(recipient_ids)}**",
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -332,7 +332,7 @@ async def callback_new_chat(callback: CallbackQuery) -> None:
     await callback.answer()
     if callback.message and isinstance(callback.message, Message):
         await callback.message.answer(
-            "Are you sure you want to clear your conversation memory and start a new chat?",
+            "Очистить историю диалога и начать новый чат?",
             reply_markup=get_new_chat_confirm_keyboard(),
         )
 
@@ -345,8 +345,8 @@ async def callback_confirm_new_chat(callback: CallbackQuery) -> None:
         await MessageService.clear_conversation(callback.from_user.id)
     if callback.message and isinstance(callback.message, Message):
         await callback.message.edit_text(
-            "🧹 **Conversation Context Cleared!**\n\n"
-            "You can start a fresh conversation now.",
+            "🧹 **История диалога очищена!**\n\n"
+            "Теперь можно начать новый диалог.",
             parse_mode=ParseMode.MARKDOWN,
         )
 
@@ -357,7 +357,7 @@ async def callback_cancel_new_chat(callback: CallbackQuery) -> None:
     await callback.answer()
     if callback.message and isinstance(callback.message, Message):
         await callback.message.edit_text(
-            "👌 Reset cancelled. Your conversation history is preserved."
+            "👌 Очистка отменена. История диалога сохранена."
         )
 
 
@@ -367,14 +367,14 @@ async def callback_settings(callback: CallbackQuery) -> None:
     await callback.answer()
     if callback.message and isinstance(callback.message, Message):
         user_id = callback.from_user.id if callback.from_user else 0
-        is_admin_str = "Yes 👑" if settings.is_admin(user_id) else "No"
+        is_admin_str = "Да 👑" if settings.is_admin(user_id) else "Нет"
         text = (
-            "⚙️ **Assistant Settings & Profile:**\n\n"
-            f"• **User ID:** `{user_id}`\n"
-            f"• **AI Model:** `{settings.GEMINI_MODEL}`\n"
-            f"• **Max Context History:** `{settings.MAX_HISTORY_MESSAGES}` messages\n"
-            f"• **Rate Limit:** `{settings.RATE_LIMIT_MESSAGES_PER_MINUTE}` requests / min\n"
-            f"• **Admin Privileges:** {is_admin_str}\n"
+            "⚙️ **Настройки помощника:**\n\n"
+            f"• **ID пользователя:** `{user_id}`\n"
+            f"• **Модель ИИ:** `{settings.GEMINI_MODEL}`\n"
+            f"• **Максимальная история контекста:** `{settings.MAX_HISTORY_MESSAGES}` сообщений\n"
+            f"• **Лимит запросов:** `{settings.RATE_LIMIT_MESSAGES_PER_MINUTE}` запросов в минуту\n"
+            f"• **Права администратора:** {is_admin_str}\n"
         )
         await callback.message.answer(text, parse_mode=ParseMode.MARKDOWN)
 
@@ -468,7 +468,7 @@ async def handle_user_text_message(message: Message) -> None:
     except Exception as exc:
         logger.exception("Unexpected error while generating AI response: %s", exc)
         await message.answer(
-            "⚠️ I encountered an unexpected error while processing your request. Please try again in a moment."
+            "⚠️ При обработке запроса произошла ошибка. Попробуйте ещё раз немного позже."
         )
 
     finally:
