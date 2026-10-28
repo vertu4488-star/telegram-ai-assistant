@@ -22,7 +22,7 @@ def main() -> None:
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=180) as response:
         body = response.read().decode("utf-8", errors="replace")
         print(f"HTTP {response.status}")
         print(body)
