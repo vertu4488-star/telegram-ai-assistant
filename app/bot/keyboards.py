@@ -7,12 +7,17 @@ def get_main_inline_keyboard() -> InlineKeyboardMarkup:
     """Return the main menu inline keyboard."""
     buttons = [
         [
-            InlineKeyboardButton(text="🤖 Ask AI", callback_data="btn_ask_ai"),
-            InlineKeyboardButton(text="🆕 New Chat", callback_data="btn_new_chat"),
+            InlineKeyboardButton(text="🔧 Диагностика и ремонт", callback_data="btn_ask_ai"),
         ],
         [
-            InlineKeyboardButton(text="⚙️ Settings", callback_data="btn_settings"),
-            InlineKeyboardButton(text="ℹ️ About", callback_data="btn_about"),
+            InlineKeyboardButton(text="📰 Канал New iPhone Service", url="https://t.me/New_Iphone_Service"),
+        ],
+        [
+            InlineKeyboardButton(text="🆕 Новый диалог", callback_data="btn_new_chat"),
+            InlineKeyboardButton(text="ℹ️ О сервисе", callback_data="btn_about"),
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ Настройки", callback_data="btn_settings"),
         ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
