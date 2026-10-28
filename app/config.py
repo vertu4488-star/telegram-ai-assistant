@@ -26,8 +26,8 @@ class Settings(BaseSettings):
 
     # AI Model Settings
     GEMINI_MODEL: str = Field(
-        default="gemini-3.7-flash",
-        description="Gemini model identifier (e.g. gemini-3.7-flash)",
+        default="gemini-3.8-flash",
+        description="Gemini model identifier (e.g. gemini-3.8-flash)",
     )
 
     # Storage Settings
@@ -73,7 +73,7 @@ class Settings(BaseSettings):
             return None
 
     def is_admin(self, telegram_id: int) -> bool:
-        """Check if a telegram user ID matches the configured admin ID."""
+        """Check if a Telegram user ID matches the configured admin ID."""
         if self.ADMIN_USER_ID is None:
             return False
         return self.ADMIN_USER_ID == telegram_id
