@@ -1,8 +1,8 @@
-"""Gemini AI Service integrating the official Google GenAI Python SDK."""
+"""Resilient Gemini service with automatic fallback to a lighter model."""
 
 import asyncio
 import logging
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from google import genai
 from google.genai import errors, types
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiService:
-    """Service wrapping Google GenAI SDK with async execution, retries, and timeouts."""
+    """Generate AI responses and automatically fail over when the primary model is busy."""
 
     def __init__(
         self,
@@ -26,6 +26,7 @@ class GeminiService:
     ) -> None:
         self.api_key = api_key or settings.GEMINI_API_KEY
         self.model_name = model_name or settings.GEMINI_MODEL
+        self.fallback_model_name = settings.GEMINI_FALLBACK_MODEL
         self.timeout_seconds = timeout_seconds or settings.REQUEST_TIMEOUT_SECONDS
         self._client: Optional[genai.Client] = None
 
@@ -38,124 +39,124 @@ class GeminiService:
             self._client = genai.Client(api_key=self.api_key)
         return self._client
 
+    @staticmethod
+    def _response_text(response: object) -> str:
+        """Extract response text, including candidate fallback for SDK variants."""
+        text = getattr(response, "text", None)
+        if text and text.strip():
+            return text.strip()
+
+        parts = []
+        for candidate in getattr(response, "candidates", None) or []:
+            candidate_content = getattr(candidate, "content", None)
+            for part in getattr(candidate_content, "parts", None) or []:
+                part_text = getattr(part, "text", None)
+                if part_text:
+                    parts.append(part_text)
+        return "\n".join(parts).strip()
+
     async def generate_response(
         self,
         prompt: str,
         history_messages: Optional[Sequence[Message]] = None,
         max_retries: int = 3,
     ) -> str:
-        """
-        Generate an AI assistant response given the prompt and conversation history.
+        """Try the primary model first, then automatically fail over to Gemini Flash-Lite."""
+        if not self.api_key:
+            logger.error("Gemini API key is not configured.")
+            return "⚠️ AI is not configured correctly. Please contact the administrator."
 
-        Handles:
-        - Multi-turn conversation format
-        - System instruction injection
-        - Timeout handling
-        - Exponential backoff retry on transient errors
-        - Safe error messaging for users
-        """
         history = history_messages or []
         contents = build_gemini_contents(history, prompt)
+        config = types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
 
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-        )
+        models = [self.model_name]
+        if self.fallback_model_name and self.fallback_model_name != self.model_name:
+            models.append(self.fallback_model_name)
 
         last_error: Optional[Exception] = None
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                logger.info(
-                    "Sending request to Gemini model=%s (attempt %d/%d, history_turns=%d)",
-                    self.model_name,
-                    attempt,
-                    max_retries,
-                    len(history),
-                )
+        for model_index, model_name in enumerate(models):
+            is_fallback = model_index > 0
+            # Avoid a long wait during failover. Primary uses configured timeout; fallback is capped at 20s.
+            timeout = min(self.timeout_seconds, 20) if is_fallback else self.timeout_seconds
+            attempts = 2 if is_fallback else 1
 
-                response = await asyncio.wait_for(
-                    self.client.aio.models.generate_content(
-                        model=self.model_name,
-                        contents=contents,
-                        config=config,
-                    ),
-                    timeout=float(self.timeout_seconds),
-                )
-
-                if response and response.text:
-                    result = response.text.strip()
+            for attempt in range(1, attempts + 1):
+                try:
                     logger.info(
-                        "Gemini response received successfully (model=%s, chars=%d)",
-                        self.model_name,
-                        len(result),
+                        "Sending request to Gemini model=%s%s (attempt %d/%d, history_turns=%d)",
+                        model_name,
+                        " [fallback]" if is_fallback else "",
+                        attempt,
+                        attempts,
+                        len(history),
                     )
-                    return result
-                elif response and response.candidates:
-                    parts = []
-                    for candidate in response.candidates:
-                        if candidate.content and candidate.content.parts:
-                            for part in candidate.content.parts:
-                                if part.text:
-                                    parts.append(part.text)
-                    if parts:
-                        result = "\n".join(parts).strip()
+                    response = await asyncio.wait_for(
+                        self.client.aio.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=config,
+                        ),
+                        timeout=float(timeout),
+                    )
+                    result = self._response_text(response)
+                    if result:
                         logger.info(
-                            "Gemini response received successfully via candidate fallback (model=%s, chars=%d)",
-                            self.model_name,
+                            "Gemini response received successfully (model=%s%s, chars=%d)",
+                            model_name,
+                            ", fallback" if is_fallback else "",
                             len(result),
                         )
                         return result
 
-                logger.warning("Gemini returned an empty response (model=%s)", self.model_name)
-                return "I received an empty response from the AI model. Please try asking again."
+                    last_error = RuntimeError(f"Gemini returned an empty response for {model_name}")
+                    logger.warning("%s", last_error)
+                    break
 
-            except asyncio.TimeoutError as exc:
-                last_error = exc
-                logger.warning(
-                    "Gemini request timed out after %ds (attempt %d/%d)",
-                    self.timeout_seconds,
-                    attempt,
-                    max_retries,
-                )
-                if attempt < max_retries:
-                    await asyncio.sleep(1.5 * attempt)
-                    continue
-                return (
-                    "⏳ The AI request timed out. Please try again in a moment "
-                    "or ask a simpler question."
-                )
+                except asyncio.TimeoutError as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Gemini request timed out (model=%s, timeout=%ds, attempt=%d/%d)",
+                        model_name, timeout, attempt, attempts,
+                    )
+                    # A timeout is a strong reason to switch models immediately.
+                    break
 
-            except errors.APIError as exc:
-                last_error = exc
-                status_code = getattr(exc, "code", None)
-                logger.error(
-                    "Gemini API error occurred (model=%s, status=%s): %s",
-                    self.model_name,
-                    status_code,
-                    exc.message if hasattr(exc, "message") else str(exc),
-                )
+                except errors.APIError as exc:
+                    last_error = exc
+                    status_code = getattr(exc, "code", None)
+                    detail = getattr(exc, "message", None) or str(exc)
+                    logger.error(
+                        "Gemini API error (model=%s, status=%s): %s",
+                        model_name, status_code, detail,
+                    )
 
-                if status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
-                    backoff = 2.0 * attempt
-                    logger.info("Retrying Gemini request after %.1fs backoff...", backoff)
-                    await asyncio.sleep(backoff)
-                    continue
+                    if status_code in (401, 403):
+                        return "⚠️ Gemini rejected the API credentials. Please contact the administrator."
 
-                if status_code == 429:
-                    return "⚠️ The AI service is currently receiving high traffic. Please wait a moment and try again."
-                return "⚠️ An error occurred while communicating with the AI service. Please try again later."
+                    retryable = status_code in (404, 429, 500, 502, 503, 504)
+                    if retryable and attempt < attempts:
+                        await asyncio.sleep(1.5 * attempt)
+                        continue
+                    # On overload, unavailable model, or server error, continue to fallback model.
+                    if retryable:
+                        break
+                    return "⚠️ An error occurred while communicating with the AI service. Please try again later."
 
-            except Exception as exc:
-                last_error = exc
-                logger.exception("Unexpected error during Gemini generation: %s", exc)
-                if attempt < max_retries:
-                    await asyncio.sleep(1.0 * attempt)
-                    continue
-                return "⚠️ An unexpected error occurred. Please try again in a few moments."
+                except Exception as exc:
+                    last_error = exc
+                    logger.exception("Unexpected error during Gemini generation (model=%s)", model_name)
+                    if attempt < attempts:
+                        await asyncio.sleep(1.0 * attempt)
+                        continue
+                    break
 
-        logger.error("All %d attempts failed for Gemini generation. Last error: %s", max_retries, last_error)
-        return "⚠️ Unable to generate a response at this time. Please try again later."
+        logger.error("Primary and fallback Gemini models failed. Last error: %s", last_error)
+        return (
+            "⚠️ Сейчас оба AI-маршрута временно недоступны. "
+            "Сообщение не потеряно — пожалуйста, повторите запрос через минуту."
+        )
 
 
-# Global singleton instance
 gemini_service = GeminiService()
