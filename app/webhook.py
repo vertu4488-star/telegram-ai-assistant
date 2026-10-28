@@ -3,6 +3,7 @@
 import os
 import logging
 import hmac
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -49,6 +50,10 @@ async def lifespan(app: FastAPI):
 
     await setup_bot_commands(bot)
 
+    from app.news.publisher import run_news_scheduler
+    news_scheduler_task = asyncio.create_task(run_news_scheduler(bot), name="channel-news-scheduler")
+    app.state.news_scheduler_task = news_scheduler_task
+
     render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
     if not render_url:
         raise RuntimeError("RENDER_EXTERNAL_URL is not available")
@@ -69,6 +74,13 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        scheduler_task = getattr(app.state, "news_scheduler_task", None)
+        if scheduler_task is not None:
+            scheduler_task.cancel()
+            try:
+                await scheduler_task
+            except asyncio.CancelledError:
+                pass
         # Do not delete the webhook on SIGTERM: Render starts the new instance
         # before stopping the old one during a zero-downtime deployment.
         await bot.session.close()
