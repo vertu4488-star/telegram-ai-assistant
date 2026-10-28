@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import settings
-from app.database.models import Base
+from app.database.models import Base, PublishedNews  # noqa: F401 - register news table before create_all
 
 logger = logging.getLogger(__name__)
 
