@@ -73,7 +73,6 @@ class GeminiService:
                     len(history),
                 )
 
-                # Use asyncio.wait_for to enforce strict timeout
                 response = await asyncio.wait_for(
                     self.client.aio.models.generate_content(
                         model=self.model_name,
@@ -84,18 +83,30 @@ class GeminiService:
                 )
 
                 if response and response.text:
-                    return response.text.strip()
+                    result = response.text.strip()
+                    logger.info(
+                        "Gemini response received successfully (model=%s, chars=%d)",
+                        self.model_name,
+                        len(result),
+                    )
+                    return result
                 elif response and response.candidates:
-                    # Fallback text extraction if .text is empty
                     parts = []
-                    for c in response.candidates:
-                        if c.content and c.content.parts:
-                            for p in c.content.parts:
-                                if p.text:
-                                    parts.append(p.text)
+                    for candidate in response.candidates:
+                        if candidate.content and candidate.content.parts:
+                            for part in candidate.content.parts:
+                                if part.text:
+                                    parts.append(part.text)
                     if parts:
-                        return "\n".join(parts).strip()
+                        result = "\n".join(parts).strip()
+                        logger.info(
+                            "Gemini response received successfully via candidate fallback (model=%s, chars=%d)",
+                            self.model_name,
+                            len(result),
+                        )
+                        return result
 
+                logger.warning("Gemini returned an empty response (model=%s)", self.model_name)
                 return "I received an empty response from the AI model. Please try asking again."
 
             except asyncio.TimeoutError as exc:
@@ -118,12 +129,12 @@ class GeminiService:
                 last_error = exc
                 status_code = getattr(exc, "code", None)
                 logger.error(
-                    "Gemini API error occurred (status=%s): %s",
+                    "Gemini API error occurred (model=%s, status=%s): %s",
+                    self.model_name,
                     status_code,
                     exc.message if hasattr(exc, "message") else str(exc),
                 )
 
-                # Retry on rate-limits (429) or server errors (500, 503)
                 if status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
                     backoff = 2.0 * attempt
                     logger.info("Retrying Gemini request after %.1fs backoff...", backoff)
