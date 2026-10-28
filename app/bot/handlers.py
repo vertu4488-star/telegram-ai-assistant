@@ -123,16 +123,16 @@ async def send_typing_action_loop(bot, chat_id: int, stop_event: asyncio.Event) 
 @router.message(CommandStart())
 async def handle_start(message: Message) -> None:
     """Handle /start command with a friendly bilingual welcome."""
-    first_name = message.from_user.first_name if message.from_user else "Friend"
+    first_name = message.from_user.first_name if message.from_user else "друг"
     welcome_text = (
-        f"👋 **Hello, {first_name}!**\n\n"
-        "I am your personal **AI Assistant**, powered by Google Gemini.\n\n"
-        "✨ **What I can do:**\n"
-        "• 💬 Chat naturally in **English** and **Khmer (ភាសាខ្មែរ)**\n"
-        "• 🧠 Remember recent conversation context\n"
-        "• 💡 Answer questions, write code, brainstorm, and explain topics\n"
-        "• ⚡ Provide fast, direct, and helpful responses\n\n"
-        "Simply send me a message to begin, or use the menu below!"
+        f"👋 **Здравствуйте, {first_name}!**\n\n"
+        "Это помощник New iPhone Service по смартфонам, Apple и ремонту техники.\n\n"
+        "🔧 **Чем могу помочь:**\n"
+        "• Диагностика неисправностей iPhone, iPad и MacBook\n"
+        "• Разбор симптомов и измерений на уровне платы\n"
+        "• Проверка гипотез и последовательность дальнейших тестов\n"
+        "• Новости Apple и мобильных технологий\n\n"
+        "Напишите вопрос обычным сообщением или выберите пункт меню ниже."
     )
     await message.answer(
         welcome_text,
@@ -145,18 +145,20 @@ async def handle_start(message: Message) -> None:
 async def handle_help(message: Message) -> None:
     """Handle /help command explaining available commands and tips."""
     help_text = (
-        "📖 **How to use the Telegram AI Assistant:**\n\n"
-        "**Available Commands:**\n"
-        "• `/start` — Start the bot and show main menu\n"
-        "• `/help` — Show this guide\n"
-        "• `/newchat` — Clear conversation context and start fresh\n"
-        "• `/memory` — Check conversation memory status\n"
-        "• `/settings` — View user and model settings\n"
-        "• `/about` — View bot details and architecture\n\n"
-        "**Conversation Tips:**\n"
-        "• Type any message or question directly in the chat.\n"
-        "• You can speak in **Khmer** or **English** — I will automatically respond in your language.\n"
-        "• Use `/newchat` when changing topics to clear previous context.\n"
+        "📖 **Как пользоваться помощником New iPhone Service:**\n\n"
+        "**Команды:**\n"
+        "• `/start` — открыть главное меню\n"
+        "• `/help` — эта справка\n"
+        "• `/newchat` — очистить историю диалога\n"
+        "• `/memory` — состояние памяти диалога\n"
+        "• `/settings` — настройки\n"
+        "• `/about` — информация о боте\n\n"
+        "**Как получить точный ответ:**\n"
+        "Опишите модель устройства, симптомы и уже выполненные проверки. "
+        "Для измерений укажите прибор, режим и полученные значения.\n"
+        "Помощник отделяет подтверждённые факты от гипотез и не должен угадывать "
+        "номера микросхем или контрольные напряжения без надёжных данных.\n"
+        "Используйте `/newchat`, чтобы начать новую тему.\n"
     )
     await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -216,14 +218,14 @@ async def handle_settings(message: Message) -> None:
 async def handle_about(message: Message) -> None:
     """Handle /about command."""
     about_text = (
-        "ℹ️ **About Telegram AI Assistant:**\n\n"
-        "A production-ready Telegram AI assistant built with modern Python technologies:\n\n"
-        "• **Framework:** `aiogram 3.x` (Async Telegram Bot API)\n"
-        "• **AI Engine:** Google Gemini (`google-genai` SDK)\n"
-        "• **Model:** `gemini-3.7-flash`\n"
-        "• **Database:** SQLite with Async SQLAlchemy 2.0\n"
-        "• **Features:** Multi-turn Memory, Auto Khmer/English Detection, Safe Markdown, Rate Limiting.\n\n"
-        "🚀 _Engineered for reliability, privacy, and speed._"
+        "ℹ️ **О New iPhone Service**\n\n"
+        "Помощник по диагностике смартфонов и компьютеров Apple, ремонту техники "
+        "и новостям мобильного рынка.\n\n"
+        "• ИИ: Google Gemini\n"
+        "• Контекст диалога: сохраняется для продолжения диагностики\n"
+        "• Рекомендации: пошаговые, с учётом модели и симптомов\n\n"
+        "Важно: ответ ИИ — это помощь в диагностике, а не подтверждение неисправности "
+        "без необходимых измерений."
     )
     await message.answer(about_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -318,8 +320,9 @@ async def callback_ask_ai(callback: CallbackQuery) -> None:
     await callback.answer()
     if callback.message and isinstance(callback.message, Message):
         await callback.message.answer(
-            "💬 You can ask me anything! Simply type your question below in **English** or **Khmer**.",
-            parse_mode=ParseMode.MARKDOWN,
+            "💬 Напишите вопрос по ремонту iPhone, iPad, MacBook или другой техники. "
+            "Я разберу симптомы, возможные причины и следующий диагностический шаг.",
+            parse_mode=None,
         )
 
 
