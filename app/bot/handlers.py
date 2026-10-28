@@ -20,6 +20,59 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="bot_router")
 
+# Owner notifications for real customer leads.
+# ADMIN_USER_ID is configurable in Render; the known owner ID is a safe fallback.
+OWNER_TELEGRAM_ID = settings.ADMIN_USER_ID or 473953596
+
+LEAD_KEYWORDS = (
+    "сколько стоит", "сколько будет стоить", "цена", "стоимость", "прайс",
+    "сколько обойдется", "сколько обойдётся", "замена экрана", "замена дисплея",
+    "замена аккумулятора", "замена батареи", "ремонт iphone", "ремонт айфона",
+    "ремонт макбук", "ремонт macbook", "ремонт ipad", "починить", "починка",
+    "консультац", "записаться", "запись на ремонт", "можно принести",
+    "принимаете в ремонт", "где находитесь", "адрес сервиса", "сколько по времени",
+    "срок ремонта", "не работает", "разбил", "не заряжается", "не включается",
+)
+
+def classify_lead_message(text: str) -> Optional[str]:
+    """Return the customer-intent label when a message looks like a repair lead."""
+    normalized = text.casefold()
+    if any(term in normalized for term in ("сколько стоит", "стоимость", "цена", "прайс", "обойдется", "обойдётся")):
+        return "Вопрос о цене"
+    if any(term in normalized for term in ("консультац", "посовет", "подскажите", "можно узнать")):
+        return "Запрос консультации"
+    if any(term in normalized for term in ("записаться", "запись на ремонт", "принимаете в ремонт", "можно принести")):
+        return "Запись / приём в ремонт"
+    if any(term in normalized for term in LEAD_KEYWORDS):
+        return "Возможный клиент: ремонт"
+    return None
+
+
+async def notify_owner_about_lead(message: Message, text: str, label: str) -> None:
+    """Send the owner a concise Telegram alert about a potential customer."""
+    if not OWNER_TELEGRAM_ID or not message.from_user:
+        return
+    user = message.from_user
+    full_name = " ".join(part for part in (user.first_name, user.last_name) if part) or "Без имени"
+    username = f"@{user.username}" if user.username else "не указан"
+    preview = " ".join(text.split())
+    if len(preview) > 700:
+        preview = preview[:697] + "..."
+    alert = (
+        "🔔 Активность потенциального клиента — New iPhone Service\n\n"
+        f"Тип обращения: {label}\n"
+        f"Клиент: {full_name}\n"
+        f"Username: {username}\n"
+        f"Telegram ID: {user.id}\n\n"
+        f"Сообщение клиента:\n{preview}\n\n"
+        f"Открыть диалог: tg://user?id={user.id}"
+    )
+    try:
+        await message.bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=alert)
+    except Exception as exc:
+        logger.warning("Failed to notify owner about customer lead: %s", exc)
+
+
 
 # ---------------------------------------------------------------------------
 # Utility Functions
@@ -416,6 +469,11 @@ async def handle_user_text_message(message: Message) -> None:
 
     user_id = message.from_user.id
     user_prompt = message.text.strip()
+
+    # Notify the owner immediately when a message indicates purchase/repair intent.
+    lead_label = classify_lead_message(user_prompt)
+    if lead_label:
+        await notify_owner_about_lead(message, user_prompt, lead_label)
 
     # 1. Persist user message
     try:
