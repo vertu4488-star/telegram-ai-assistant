@@ -38,7 +38,6 @@ FEEDS: tuple[tuple[str, str], ...] = (
     ("AppleInsider", "https://appleinsider.com/rss/news/"),
     ("The Verge", "https://www.theverge.com/rss/index.xml"),
     ("Android Authority", "https://www.androidauthority.com/feed/"),
-    ("GSMArena", "https://www.gsmarena.com/rss-news-reviews.php3"),
     ("Samsung Newsroom", "https://news.samsung.com/global/feed"),
 )
 
@@ -243,7 +242,7 @@ async def _generate_post(article: Article) -> str:
             last_error = RuntimeError(f"Empty Gemini response from {model}")
         except Exception as exc:
             last_error = exc
-            logger.warning("News text generation failed on %s: %s", model, exc)
+            logger.warning("News text generation failed on %s (%s): %r", model, type(exc).__name__, exc)
     raise RuntimeError(f"All Gemini models failed for news post: {last_error}")
 
 
