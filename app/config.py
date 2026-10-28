@@ -28,6 +28,10 @@ class Settings(BaseSettings):
         description="Fallback Gemini model used when the primary model is temporarily unavailable",
     )
 
+    # Channel news publishing settings
+    NEWS_CHANNEL_USERNAME: str = Field(default="@New_Iphone_Service", description="Telegram channel username for automated news posts")
+    NEWS_PUBLISH_SECRET: str = Field(default="", description="Shared secret required to trigger scheduled news publishing")
+
     # Storage Settings
     DATABASE_URL: str = Field(default="sqlite+aiosqlite:///./bot.db", description="Database connection URL")
 
