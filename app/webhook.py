@@ -27,6 +27,15 @@ async def lifespan(app: FastAPI):
     if not settings.TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
 
+    if not settings.GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY is not configured; AI replies will fail")
+    logger.info(
+        "AI configuration loaded (model=%s, api_key_configured=%s, timeout_seconds=%s)",
+        settings.GEMINI_MODEL,
+        bool(settings.GEMINI_API_KEY),
+        settings.REQUEST_TIMEOUT_SECONDS,
+    )
+
     await init_db()
 
     bot = Bot(
