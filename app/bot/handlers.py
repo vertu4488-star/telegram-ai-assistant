@@ -68,7 +68,7 @@ async def notify_owner_about_lead(message: Message, text: str, label: str) -> No
         f"Открыть диалог: tg://user?id={user.id}"
     )
     try:
-        await message.bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=alert)
+        await message.bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=alert, parse_mode=None)
     except Exception as exc:
         logger.warning("Failed to notify owner about customer lead: %s", exc)
 
