@@ -25,7 +25,7 @@ ROOTS = {
     "macbook": ["/services/remont-macbook-air", "/services/remont-macbook-pro"],
 }
 CACHE_SECONDS = 6 * 60 * 60
-_TIMEOUT = aiohttp.ClientTimeout(total=12, connect=5)
+_TIMEOUT = aiohttp.ClientTimeout(total=8, connect=4)
 _cache: dict[str, tuple[float, str]] = {}
 _lock = asyncio.Lock()
 
