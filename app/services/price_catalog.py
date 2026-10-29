@@ -233,7 +233,7 @@ async def get_price_context(prompt: str) -> str:
                 group_pages = [
                     (url, label) for url, label in list(candidates.items())
                     if re.search(r"-(?:11|13|14|15|16)-in(?:$|/)", urlparse(url).path)
-                    or re.search(r"macbook\\s+(?:air|pro)\\s+(?:11|13|14|15|16)", label, re.I)
+                    or re.search(r"macbook\s+(?:air|pro)\s+(?:11|13|14|15|16)", label, re.I)
                 ][:12]
                 for group_url, _label in group_pages:
                     group_html = await _get(session, group_url)
