@@ -32,13 +32,9 @@ logger = logging.getLogger(__name__)
 # articles and rely on Telegram's native preview rather than re-uploading media.
 FEEDS: tuple[tuple[str, str], ...] = (
     ("Apple Newsroom", "https://www.apple.com/newsroom/rss-feed.rss"),
-    ("Apple Developer", "https://developer.apple.com/news/rss/news.rss"),
-    ("9to5Mac", "https://9to5mac.com/feed/"),
     ("MacRumors", "https://feeds.macrumors.com/MacRumors-All"),
+    ("9to5Mac", "https://9to5mac.com/feed/"),
     ("AppleInsider", "https://appleinsider.com/rss/news/"),
-    ("The Verge", "https://www.theverge.com/rss/index.xml"),
-    ("Android Authority", "https://www.androidauthority.com/feed/"),
-    ("Samsung Newsroom", "https://news.samsung.com/global/feed"),
 )
 
 KEYWORDS = (
