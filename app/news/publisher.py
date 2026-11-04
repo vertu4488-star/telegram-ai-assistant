@@ -35,6 +35,8 @@ FEEDS: tuple[tuple[str, str], ...] = (
     ("MacRumors", "https://feeds.macrumors.com/MacRumors-All"),
     ("9to5Mac", "https://9to5mac.com/feed/"),
     ("AppleInsider", "https://appleinsider.com/rss/news/"),
+    ("9to5Google", "https://9to5google.com/feed/"),
+    ("UploadVR", "https://www.uploadvr.com/rss/"),
 )
 
 KEYWORDS = (
@@ -42,8 +44,18 @@ KEYWORDS = (
     "ios", "apple watch", "watchos", "apple intelligence", "airpods", "apple",
     "samsung", "galaxy", "android", "pixel", "xiaomi", "oneplus", "huawei",
     "smartphone", "smartwatch", "foldable", "phone", "laptop", "chip",
-    "processor", "wearable",
+    "processor", "wearable", "smart glasses", "camera glasses", "ray-ban",
+    "headset", "meta quest", "mixed reality", "augmented reality",
+    "virtual reality", "earbuds", "power bank", "magsafe", "usb-c",
 )
+
+SLOT_TOPICS = {
+    "10": r"\b(?:apple|iphone|ipad|ios|macbook|airpods)\b",
+    "12": r"\b(?:android|galaxy|pixel|xiaomi|oneplus|huawei|smartphones?|foldables?)\b",
+    "15": r"\b(?:earbuds|headphones|chargers?|charging|wearables?|smartwatches|power banks?|magsafe|usb-c)\b",
+    "17": r"\b(?:vr|ar|xr|smart glasses|camera glasses|ray-ban|headsets?|quest|vision pro|mixed reality|augmented reality|virtual reality)\b",
+    "20": r"\b(?:repair|repairability|teardown|comparison|guide|tips|how to)\b",
+}
 
 EVERGREEN_TOPICS = (
     ("iPhone", "Как правильно проверять состояние аккумулятора iPhone и какие показатели действительно важны.", "https://support.apple.com/"),
@@ -157,7 +169,9 @@ async def _collect_articles() -> list[Article]:
         title_lower = article.title.lower()
         if article.published_at < cutoff:
             continue
-        if not any(word in title_lower for word in KEYWORDS):
+        if not any(word in title_lower for word in KEYWORDS) and not any(
+            re.search(pattern, title_lower) for pattern in SLOT_TOPICS.values()
+        ):
             continue
         key = article.url.rstrip("/")
         unique.setdefault(key, article)
@@ -256,6 +270,10 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
         return {"status": "already_published", "slot_key": slot_key, "title": existing_slot.title}
 
     articles = await _collect_articles()
+    topic_pattern = SLOT_TOPICS.get(slot_key.rsplit("-", 1)[-1])
+    if topic_pattern:
+        articles.sort(key=lambda item: not re.search(topic_pattern, item.title, re.I))
+
     article: Article | None = None
     for candidate in articles:
         if not await _already_published(candidate.url):
