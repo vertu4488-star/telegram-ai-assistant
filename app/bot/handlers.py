@@ -470,31 +470,7 @@ async def handle_user_text_message(message: Message) -> None:
     user_id = message.from_user.id
     user_prompt = message.text.strip()
 
-    # Notify the owner immediately when a message indicates purchase/repair intent.
-    lead_label = classify_lead_message(user_prompt)
-    if lead_label:
-        await notify_owner_about_lead(message, user_prompt, lead_label)
-
-    # 1. Persist user message
-    try:
-        await MessageService.save_user_message(telegram_id=user_id, content=user_prompt)
-    except Exception as exc:
-        logger.error("Failed to save incoming user message: %s", exc)
-
-    # 2. Fetch conversation history for multi-turn context
-    history = []
-    try:
-        history = await MessageService.get_conversation_history(
-            telegram_id=user_id,
-            limit=settings.MAX_HISTORY_MESSAGES,
-        )
-        # Exclude the current message that was just saved from the history list to prevent duplication
-        if history and history[-1].role == "user" and history[-1].content == user_prompt:
-            history = list(history[:-1])
-    except Exception as exc:
-        logger.error("Failed to fetch conversation history: %s", exc)
-
-    # 3. Start typing indicator background loop
+    # Show activity while loading conversation history and generating the answer.
     stop_typing_event = asyncio.Event()
     typing_task = asyncio.create_task(
         send_typing_action_loop(
@@ -504,7 +480,32 @@ async def handle_user_text_message(message: Message) -> None:
         )
     )
 
+    lead_label = classify_lead_message(user_prompt)
+    lead_task = (
+        asyncio.create_task(notify_owner_about_lead(message, user_prompt, lead_label))
+        if lead_label else None
+    )
+
     try:
+        # 1. Persist user message
+        try:
+            await MessageService.save_user_message(telegram_id=user_id, content=user_prompt)
+        except Exception as exc:
+            logger.error("Failed to save incoming user message: %s", exc)
+
+        # 2. Fetch conversation history for multi-turn context
+        history = []
+        try:
+            history = await MessageService.get_conversation_history(
+                telegram_id=user_id,
+                limit=settings.MAX_HISTORY_MESSAGES,
+            )
+            # Exclude the current message that was just saved from the history list to prevent duplication
+            if history and history[-1].role == "user" and history[-1].content == user_prompt:
+                history = list(history[:-1])
+        except Exception as exc:
+            logger.error("Failed to fetch conversation history: %s", exc)
+
         # 4. Generate AI response via Gemini
         ai_response = await gemini_service.generate_response(
             prompt=user_prompt,
@@ -532,4 +533,7 @@ async def handle_user_text_message(message: Message) -> None:
     finally:
         # Stop typing indicator loop
         stop_typing_event.set()
-        await typing_task
+        typing_task.cancel()
+        await asyncio.gather(typing_task, return_exceptions=True)
+        if lead_task is not None:
+            await lead_task
