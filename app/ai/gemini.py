@@ -97,79 +97,68 @@ class GeminiService:
 
         for model_index, model_name in enumerate(models):
             is_fallback = model_index > 0
-            # Avoid a long wait during failover. Primary uses configured timeout; fallback is capped at 20s.
-            timeout = min(self.timeout_seconds, 20) if is_fallback else self.timeout_seconds
-            attempts = 2 if is_fallback else 1
-
-            for attempt in range(1, attempts + 1):
-                try:
+            # Leave time for the fallback when the primary model is slow.
+            timeout = min(self.timeout_seconds, 8 if is_fallback else 12)
+            try:
+                logger.info(
+                    "Sending request to Gemini model=%s%s (history_turns=%d)",
+                    model_name,
+                    " [fallback]" if is_fallback else "",
+                    len(history),
+                )
+                response = await asyncio.wait_for(
+                    self.client.aio.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config,
+                    ),
+                    timeout=float(timeout),
+                )
+                result = self._response_text(response)
+                if result:
                     logger.info(
-                        "Sending request to Gemini model=%s%s (attempt %d/%d, history_turns=%d)",
+                        "Gemini response received successfully (model=%s%s, chars=%d)",
                         model_name,
-                        " [fallback]" if is_fallback else "",
-                        attempt,
-                        attempts,
-                        len(history),
+                        ", fallback" if is_fallback else "",
+                        len(result),
                     )
-                    response = await asyncio.wait_for(
-                        self.client.aio.models.generate_content(
-                            model=model_name,
-                            contents=contents,
-                            config=config,
-                        ),
-                        timeout=float(timeout),
-                    )
-                    result = self._response_text(response)
-                    if result:
-                        logger.info(
-                            "Gemini response received successfully (model=%s%s, chars=%d)",
-                            model_name,
-                            ", fallback" if is_fallback else "",
-                            len(result),
-                        )
-                        return result
+                    return result
 
-                    last_error = RuntimeError(f"Gemini returned an empty response for {model_name}")
-                    logger.warning("%s", last_error)
-                    break
+                last_error = RuntimeError(f"Gemini returned an empty response for {model_name}")
+                logger.warning("%s", last_error)
+                continue
 
-                except asyncio.TimeoutError as exc:
-                    last_error = exc
-                    logger.warning(
-                        "Gemini request timed out (model=%s, timeout=%ds, attempt=%d/%d)",
-                        model_name, timeout, attempt, attempts,
-                    )
-                    # A timeout is a strong reason to switch models immediately.
-                    break
+            except asyncio.TimeoutError as exc:
+                last_error = exc
+                logger.warning(
+                    "Gemini request timed out (model=%s, timeout=%ds)",
+                    model_name, timeout,
+                )
+                # A timeout is a strong reason to switch models immediately.
+                continue
 
-                except errors.APIError as exc:
-                    last_error = exc
-                    status_code = getattr(exc, "code", None)
-                    detail = getattr(exc, "message", None) or str(exc)
-                    logger.error(
-                        "Gemini API error (model=%s, status=%s): %s",
-                        model_name, status_code, detail,
-                    )
+            except errors.APIError as exc:
+                last_error = exc
+                status_code = getattr(exc, "code", None)
+                detail = getattr(exc, "message", None) or str(exc)
+                logger.error(
+                    "Gemini API error (model=%s, status=%s): %s",
+                    model_name, status_code, detail,
+                )
 
-                    if status_code in (401, 403):
-                        return "⚠️ Gemini rejected the API credentials. Please contact the administrator."
+                if status_code in (401, 403):
+                    return "⚠️ Gemini rejected the API credentials. Please contact the administrator."
 
-                    retryable = status_code in (404, 429, 500, 502, 503, 504)
-                    if retryable and attempt < attempts:
-                        await asyncio.sleep(1.5 * attempt)
-                        continue
-                    # On overload, unavailable model, or server error, continue to fallback model.
-                    if retryable:
-                        break
-                    return "⚠️ An error occurred while communicating with the AI service. Please try again later."
+                retryable = status_code in (404, 429, 500, 502, 503, 504)
+                # On overload, unavailable model, or server error, continue to fallback model.
+                if retryable:
+                    continue
+                return "⚠️ An error occurred while communicating with the AI service. Please try again later."
 
-                except Exception as exc:
-                    last_error = exc
-                    logger.exception("Unexpected error during Gemini generation (model=%s)", model_name)
-                    if attempt < attempts:
-                        await asyncio.sleep(1.0 * attempt)
-                        continue
-                    break
+            except Exception as exc:
+                last_error = exc
+                logger.exception("Unexpected error during Gemini generation (model=%s)", model_name)
+                continue
 
         logger.error("Primary and fallback Gemini models failed. Last error: %s", last_error)
         return (
