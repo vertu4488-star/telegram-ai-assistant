@@ -7,6 +7,8 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from app.crm_api import router as crm_router
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -80,6 +82,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="New iPhone Service", version="1.0.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["https://new-iphone-crm-preview.onrender.com"], allow_methods=["POST", "GET"], allow_headers=["Authorization", "Content-Type"])
+app.include_router(crm_router)
 
 
 @app.get("/")
@@ -128,3 +132,4 @@ async def publish_next_channel_news(request: Request):
     except Exception as exc:
         logger.exception("Scheduled channel news publication failed for slot %s", slot_key)
         raise HTTPException(status_code=500, detail="News publication failed") from exc
+
