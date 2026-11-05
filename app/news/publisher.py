@@ -52,16 +52,16 @@ KEYWORDS = (
 # Fail closed: gaming and entertainment headlines are not service news.
 # Check the headline, not an incidental keyword in the RSS description.
 GAMING_RE = re.compile(
-    r"\\b(?:video games?|gaming|gamer[s]?|gameplay|esports?|steam|playstation|xbox|nintendo|"
+    r"\b(?:video games?|gaming|gamer[s]?|gameplay|esports?|steam|playstation|xbox|nintendo|"
     r"switch 2|ps5|fortnite|minecraft|roblox|call of duty|grand theft auto|gta vi|"
-    r"game awards|gaming console[s]?|gaming headset[s]?)\\b", re.I
+    r"game awards|gaming console[s]?|gaming headset[s]?)\b", re.I
 )
 DEVICE_RE = re.compile(
-    r"\\b(?:iphone|ipad|macbook|imac|mac mini|mac studio|macos|ios|ipados|watchos|"
+    r"\b(?:iphone|ipad|macbook|imac|mac mini|mac studio|macos|ios|ipados|watchos|"
     r"apple watch|airpods|apple intelligence|samsung|galaxy|android|pixel|xiaomi|"
     r"oneplus|huawei|smartphone[s]?|smartwatch(?:es)?|foldable[s]?|"
     r"smart glasses|camera glasses|ray-ban meta|vision pro|wearable[s]?|"
-    r"earbuds|magsafe|usb-c|repairability|battery repair|phone repair)\\b", re.I
+    r"earbuds|magsafe|usb-c|repairability|battery repair|phone repair)\b", re.I
 )
 
 def _on_topic(article: Article) -> bool:
