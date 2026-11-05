@@ -1,4 +1,6 @@
 import unittest
+import sys
+import types
 from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -31,5 +33,24 @@ class CRMTests(unittest.TestCase):
         for _ in range(6):crm_api.rate_limit('test')
         with self.assertRaises(Exception) as cm:crm_api.rate_limit('test')
         self.assertEqual(cm.exception.status_code,429)
+    def test_dispatch_unknown_result_not_marked_sent(self):
+        class Reject(Exception):pass
+        exceptions=types.ModuleType('aiogram.exceptions')
+        exceptions.TelegramBadRequest=exceptions.TelegramForbiddenError=exceptions.TelegramRetryAfter=Reject
+        bot=types.SimpleNamespace(get_chat=AsyncMock(return_value=types.SimpleNamespace(id=123,type='private')),send_message=AsyncMock(side_effect=TimeoutError()))
+        self.client.app.state.bot=bot
+        payload={'id':'m1','destination':'123','message_text':'Ready'}
+        with patch.dict(sys.modules,{'aiogram.exceptions':exceptions}),patch.object(crm_api,'staff_auth',AsyncMock(return_value=('staff','token'))),patch.object(crm_api,'supabase_get',return_value=[{'id':'m1'}]),patch.object(crm_api,'supabase_rpc',side_effect=[[payload],True]) as rpc:
+            r=self.client.post('/crm/messages/dispatch');self.assertEqual(r.status_code,200)
+            self.assertEqual(r.json()['processed'][0]['status'],'unknown')
+            self.assertEqual(rpc.call_args_list[1].args[1]['p_status'],'unknown')
+            bot.send_message.assert_awaited_once()
+    def test_dispatch_lost_claim_never_sends(self):
+        class Reject(Exception):pass
+        exceptions=types.ModuleType('aiogram.exceptions')
+        exceptions.TelegramBadRequest=exceptions.TelegramForbiddenError=exceptions.TelegramRetryAfter=Reject
+        bot=types.SimpleNamespace(send_message=AsyncMock());self.client.app.state.bot=bot
+        with patch.dict(sys.modules,{'aiogram.exceptions':exceptions}),patch.object(crm_api,'staff_auth',AsyncMock(return_value=('staff','token'))),patch.object(crm_api,'supabase_get',return_value=[{'id':'m1'}]),patch.object(crm_api,'supabase_rpc',return_value=[]):
+            r=self.client.post('/crm/messages/dispatch');self.assertEqual(r.status_code,200);bot.send_message.assert_not_awaited()
 
 if __name__=='__main__':unittest.main()
