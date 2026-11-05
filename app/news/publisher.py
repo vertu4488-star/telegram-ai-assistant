@@ -49,6 +49,27 @@ KEYWORDS = (
     "virtual reality", "earbuds", "power bank", "magsafe", "usb-c",
 )
 
+# Fail closed: gaming and entertainment headlines are not service news.
+# Check the headline, not an incidental keyword in the RSS description.
+GAMING_RE = re.compile(
+    r"\\b(?:video games?|gaming|gamer[s]?|gameplay|esports?|steam|playstation|xbox|nintendo|"
+    r"switch 2|ps5|fortnite|minecraft|roblox|call of duty|grand theft auto|gta vi|"
+    r"game awards|gaming console[s]?|gaming headset[s]?)\\b", re.I
+)
+DEVICE_RE = re.compile(
+    r"\\b(?:iphone|ipad|macbook|imac|mac mini|mac studio|macos|ios|ipados|watchos|"
+    r"apple watch|airpods|apple intelligence|samsung|galaxy|android|pixel|xiaomi|"
+    r"oneplus|huawei|smartphone[s]?|smartwatch(?:es)?|foldable[s]?|"
+    r"smart glasses|camera glasses|ray-ban meta|vision pro|wearable[s]?|"
+    r"earbuds|magsafe|usb-c|repairability|battery repair|phone repair)\\b", re.I
+)
+
+def _on_topic(article: Article) -> bool:
+    title = article.title.strip()
+    if GAMING_RE.search(title):
+        return False
+    return bool(DEVICE_RE.search(title))
+
 SLOT_TOPICS = {
     "10": r"\b(?:apple|iphone|ipad|ios|macbook|airpods)\b",
     "12": r"\b(?:android|galaxy|pixel|xiaomi|oneplus|huawei|smartphones?|foldables?)\b",
@@ -169,9 +190,7 @@ async def _collect_articles() -> list[Article]:
         title_lower = article.title.lower()
         if article.published_at < cutoff:
             continue
-        if not any(word in title_lower for word in KEYWORDS) and not any(
-            re.search(pattern, title_lower) for pattern in SLOT_TOPICS.values()
-        ):
+        if not _on_topic(article):
             continue
         key = article.url.rstrip("/")
         unique.setdefault(key, article)
@@ -292,6 +311,10 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
             published_at=datetime.now(timezone.utc),
             is_evergreen=True,
         )
+
+    # A second guard prevents future selection changes from bypassing editorial policy.
+    if not article.is_evergreen and not _on_topic(article):
+        raise RuntimeError("Off-topic news article rejected before publishing")
 
     post_text = await _generate_post(article)
     source_line = f"\n\nИсточник: {article.source}\n{article.url}"
