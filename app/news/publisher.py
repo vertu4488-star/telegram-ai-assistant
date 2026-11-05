@@ -274,7 +274,15 @@ async def _generate_post(article: Article) -> str:
         except Exception as exc:
             last_error = exc
             logger.warning("News text generation failed on %s (%s): %r", model, type(exc).__name__, exc)
-    raise RuntimeError(f"All Gemini models failed for news post: {last_error}")
+    # A temporary AI outage must not take down the scheduled news pipeline.
+    # Use only the supplied RSS facts; do not invent details or claims.
+    logger.error("Gemini unavailable; using source-only news fallback: %r", last_error)
+    if article.is_evergreen:
+        return f"📱 {article.title}\\n\\n{article.summary[:1100]}\\n\\n#NewiPhoneService"
+    summary = article.summary.strip()
+    if not summary:
+        return f"📱 {article.title}\\n\\nНовость от {article.source}. Подробности — в оригинальном материале по ссылке ниже."
+    return f"📱 {article.title}\\n\\n{summary[:1300]}\\n\\nИсточник: {article.source}"
 
 
 async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
