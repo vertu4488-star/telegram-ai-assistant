@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
-from app.crm_api import router as crm_router
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -85,7 +84,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="New iPhone Service", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["https://new-iphone-crm-preview.onrender.com"], allow_methods=["POST", "GET"], allow_headers=["Authorization", "Content-Type"])
-app.include_router(crm_router)
 
 
 @app.get("/")
@@ -233,7 +231,7 @@ async def handle_crm_link_update(request: Request, update: Update) -> bool:
                 )
             if response.status_code==200:
                 await cq.answer("Уведомления подключены")
-                await cq.message.answer("✅ Telegram-уведомления о готовности ремонта подключены. New iPhone Service.",parse_mode=None)
+                await bot.send_message(chat_id=chat.id,text="✅ Telegram-уведомления о готовности ремонта подключены. New iPhone Service.",parse_mode=None)
             elif response.status_code==410:
                 await cq.answer("Ссылка истекла или использована",show_alert=True)
             elif response.status_code==409:
