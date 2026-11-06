@@ -16,6 +16,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import Update
 
 from app.crm_api import extract_finance, bounded_json
+from app.crm_assistant import interpret_crm_command
 from app.bot.commands import setup_bot_commands
 from app.config import settings
 from app.database.database import close_db, init_db
@@ -169,6 +170,13 @@ async def crm_bridge_extract(request: Request):
     require_crm_bridge(request)
     payload=await bounded_json(request)
     return await extract_finance(payload)
+
+@app.post("/internal/crm/assistant-interpret")
+async def crm_bridge_assistant_interpret(request: Request):
+    require_crm_bridge(request)
+    payload=await bounded_json(request)
+    return await interpret_crm_command(payload)
+
 
 @app.post("/internal/crm/telegram-send")
 async def crm_bridge_telegram_send(request: Request,payload:CRMPrivateMessage):
