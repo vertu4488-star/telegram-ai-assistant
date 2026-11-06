@@ -65,8 +65,12 @@ async def lifespan(app: FastAPI):
 
     # Webhook and polling are mutually exclusive. Registering the webhook
     # here makes the current deployment the single Telegram update consumer.
+    telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET","")
+    if len(telegram_webhook_secret)<32:
+        raise RuntimeError("TELEGRAM_WEBHOOK_SECRET is required for safe Telegram update processing")
     await bot.set_webhook(
         url=webhook_url,
+        secret_token=telegram_webhook_secret,
         allowed_updates=dp.resolve_used_update_types(),
         drop_pending_updates=False,
     )
@@ -99,6 +103,10 @@ async def health():
 
 @app.post(WEBHOOK_PATH)
 async def telegram_webhook(request: Request):
+    expected_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET","")
+    received_secret=request.headers.get("X-Telegram-Bot-Api-Secret-Token","")
+    if len(expected_secret)<32 or not hmac.compare_digest(expected_secret,received_secret):
+        raise HTTPException(403,"Invalid Telegram webhook secret")
     try:
         data = await request.json()
         update = Update.model_validate(data)
