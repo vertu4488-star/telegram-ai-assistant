@@ -98,6 +98,7 @@ async def interpret_crm_command(payload):
         "draft_part — новая карточка запчасти (part_name, sku, unit_cost); "
         "draft_stock — приход или расход существующей запчасти (part_name, quantity_delta: приход положительный, списание отрицательное); "
         "draft_finance — запись фактического дохода или расхода (amount, kind, category, description); "
+        "Для draft_stock и draft_finance извлекай order_ref ТОЛЬКО если сотрудник явно назвал номер ремонта; иначе оставь пустым. "
         "draft_status — изменение статуса по явно указанному номеру ремонта order_ref, status: "
         "received / diagnosing / ready / delivered / cancelled. "
         "Для любого неоднозначного запроса unknown, не составляй черновик. "
