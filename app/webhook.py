@@ -7,6 +7,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from app.crm_api import router as crm_router
 from aiogram import Bot
@@ -133,3 +134,51 @@ async def publish_next_channel_news(request: Request):
         logger.exception("Scheduled channel news publication failed for slot %s", slot_key)
         raise HTTPException(status_code=500, detail="News publication failed") from exc
 
+
+
+# Private bridge to the Neon CRM. Never expose Telegram tokens or customer data to a browser.
+# The shared secret is set independently for the CRM and bot services in Render.
+def require_crm_bridge(request: Request):
+    configured=os.getenv("CRM_BRIDGE_SECRET","")
+    provided=request.headers.get("X-CRM-Bridge-Secret","")
+    if not configured or len(configured)<48 or not hmac.compare_digest(configured,provided):
+        raise HTTPException(403,"Forbidden")
+
+class CRMPrivateMessage(BaseModel):
+    chat_id: int = Field(gt=0)
+    text: str = Field(min_length=1,max_length=3500)
+
+@app.get("/internal/crm/health")
+async def crm_bridge_health(request: Request):
+    require_crm_bridge(request)
+    return {"ok":True,"telegram":bool(settings.TELEGRAM_BOT_TOKEN),
+            "voice":bool(settings.GEMINI_API_KEY)}
+
+@app.post("/internal/crm/voice-extract")
+async def crm_bridge_extract(request: Request):
+    require_crm_bridge(request)
+    from app.crm_api import bounded_json,extract_finance
+    payload=await bounded_json(request)
+    return await extract_finance(payload)
+
+@app.post("/internal/crm/telegram-send")
+async def crm_bridge_telegram_send(request: Request,payload:CRMPrivateMessage):
+    require_crm_bridge(request)
+    from aiogram.exceptions import TelegramBadRequest,TelegramForbiddenError,TelegramRetryAfter
+    try:
+        chat=await request.app.state.bot.get_chat(payload.chat_id)
+        if chat.type!="private":
+            raise HTTPException(422,"Messages allowed only to verified private conversations")
+        result=await request.app.state.bot.send_message(
+            chat_id=payload.chat_id,text=payload.text,parse_mode=None)
+        return {"ok":True,"message_id":str(result.message_id)}
+    except HTTPException:
+        raise
+    except (TelegramBadRequest,TelegramForbiddenError) as exc:
+        logger.warning("CRM Telegram delivery rejected by Telegram")
+        raise HTTPException(422,"Telegram recipient cannot be reached") from None
+    except TelegramRetryAfter as exc:
+        raise HTTPException(429,"Telegram rate limit") from None
+    except Exception as exc:
+        logger.warning("CRM Telegram delivery outcome unknown")
+        raise HTTPException(502,"Telegram delivery outcome could not be confirmed") from None
