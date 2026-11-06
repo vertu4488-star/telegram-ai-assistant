@@ -15,6 +15,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import Update
 
+from app.crm_api import extract_finance, bounded_json
 from app.bot.commands import setup_bot_commands
 from app.config import settings
 from app.database.database import close_db, init_db
@@ -158,7 +159,6 @@ async def crm_bridge_health(request: Request):
 @app.post("/internal/crm/voice-extract")
 async def crm_bridge_extract(request: Request):
     require_crm_bridge(request)
-    from app.crm_api import bounded_json,extract_finance
     payload=await bounded_json(request)
     return await extract_finance(payload)
 
