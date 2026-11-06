@@ -3,6 +3,7 @@
 import os
 import logging
 import hmac
+import re
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -102,6 +103,8 @@ async def telegram_webhook(request: Request):
     try:
         data = await request.json()
         update = Update.model_validate(data)
+        if await handle_crm_link_update(request, update):
+            return {"ok": True}
         await request.app.state.dp.feed_update(request.app.state.bot, update)
         return {"ok": True}
     except Exception as exc:
@@ -182,3 +185,63 @@ async def crm_bridge_telegram_send(request: Request,payload:CRMPrivateMessage):
     except Exception as exc:
         logger.warning("CRM Telegram delivery outcome unknown")
         raise HTTPException(502,"Telegram delivery outcome could not be confirmed") from None
+
+
+async def handle_crm_link_update(request: Request, update: Update) -> bool:
+    """Handle private opt-in links without changing the normal assistant conversation."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    bot=request.app.state.bot
+    message=update.message
+    if message and message.text:
+        match=re.fullmatch(r"/start(?:@\w+)?\s+crm_([A-Za-z0-9_-]{30,60})",message.text.strip())
+        if match:
+            if message.chat.type!="private" or not message.from_user:
+                await message.answer("Привязка уведомлений доступна только в личном чате с ботом.")
+                return True
+            token=match.group(1)
+            keyboard=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Подключить уведомления о ремонте",callback_data="crm_link:"+token)]
+            ])
+            await message.answer(
+                "New iPhone Service\n\n"
+                "Чтобы получать личные уведомления о готовности ремонта через этот Telegram-бот, "
+                "нажмите кнопку ниже. Вы соглашаетесь получать сообщения о статусе ремонта. "
+                "Позже их можно отключить через сервис.\n\n"
+                "Ссылка действует 20 минут. Если вы не оформляли ремонт, не нажимайте кнопку.",
+                reply_markup=keyboard,parse_mode=None,
+            )
+            return True
+    cq=update.callback_query
+    if cq and isinstance(cq.data,str) and cq.data.startswith("crm_link:"):
+        token=cq.data[len("crm_link:"):]
+        chat=cq.message.chat if cq.message else None
+        if not re.fullmatch(r"[A-Za-z0-9_-]{30,60}",token) or not chat or chat.type!="private" or cq.from_user.id!=chat.id:
+            await cq.answer("Недействительное подтверждение",show_alert=True)
+            return True
+        configured=os.getenv("CRM_BRIDGE_SECRET","")
+        if len(configured)<48:
+            await cq.answer("Подключение временно недоступно",show_alert=True)
+            return True
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=14) as client:
+                response=await client.post(
+                    os.getenv("CRM_NEON_API_URL","https://new-iphone-crm-api-staging.onrender.com").rstrip("/")
+                        +"/internal/crm/telegram-link/confirm",
+                    json={"token":token,"chat_id":chat.id,"user_id":cq.from_user.id},
+                    headers={"X-CRM-Bridge-Secret":configured},
+                )
+            if response.status_code==200:
+                await cq.answer("Уведомления подключены")
+                await cq.message.answer("✅ Telegram-уведомления о готовности ремонта подключены. New iPhone Service.",parse_mode=None)
+            elif response.status_code==410:
+                await cq.answer("Ссылка истекла или использована",show_alert=True)
+            elif response.status_code==409:
+                await cq.answer("Этот чат уже привязан к другому клиенту",show_alert=True)
+            else:
+                await cq.answer("Не удалось подключить. Обратитесь в сервис.",show_alert=True)
+        except Exception:
+            logger.warning("CRM Telegram link callback unavailable")
+            await cq.answer("Подключение временно недоступно",show_alert=True)
+        return True
+    return False
