@@ -1,57 +1,21 @@
-"""Staff-only CRM AI endpoint; no database writes or credentials in responses."""
+"""Gemini AI extraction of staff-recorded voice/text into reviewed finance drafts.
+
+Called only through the secret-protected CRM integration in app.webhook.
+No database writes and no Supabase dependencies.
+"""
 import asyncio
 import base64
 import binascii
 import json
 import math
-import time
 from datetime import date, datetime
 from decimal import Decimal
-from urllib.request import Request as URLRequest, urlopen
-from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import HTTPException
 
-router = APIRouter(prefix='/crm', tags=['CRM'])
-SUPABASE_URL = 'https://htdcrcfzzlpxrtredvdf.supabase.co'
-SUPABASE_KEY = 'sb_publishable_h_ufl8kfa55G-NmiApr9NA_S7UWdM2m'
 MAX_BODY = 9_000_000
 MAX_AUDIO = 6_000_000
-_rates = {}
-
-def supabase_get(path, token):
-    req = URLRequest(SUPABASE_URL + path, headers={'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + token})
-    try:
-        with urlopen(req, timeout=12) as response:
-            return json.load(response)
-    except HTTPError as exc:
-        raise HTTPException(401 if exc.code in (401,403) else 502, 'Не удалось проверить доступ к CRM') from None
-    except (URLError, TimeoutError):
-        raise HTTPException(503, 'Проверка доступа временно недоступна') from None
-
-async def staff_auth(request):
-    token = request.headers.get('authorization', '')
-    if not token.startswith('Bearer ') or len(token)>8192:
-        raise HTTPException(401, 'Войдите в CRM')
-    token=token[7:]
-    user=await asyncio.to_thread(supabase_get,'/auth/v1/user',token)
-    uid=user.get('id','')
-    from uuid import UUID
-    try: uid=str(UUID(uid))
-    except (ValueError,TypeError): raise HTTPException(401,'Недействительная сессия')
-    rows=await asyncio.to_thread(supabase_get,'/rest/v1/crm_staff?select=role,active&user_id=eq.'+uid,token)
-    if not rows or not rows[0].get('active') or rows[0].get('role') not in ('admin','manager'):
-        raise HTTPException(403,'Доступ только для администратора и менеджера')
-    return uid,token
-
-def rate_limit(uid):
-    now=time.monotonic()
-    for key in list(_rates):
-        if now-_rates[key][0]>60: del _rates[key]
-    stamp,count=_rates.get(uid,(now,0))
-    if count>=6: raise HTTPException(429,'Слишком много запросов. Повторите через минуту.')
-    _rates[uid]=(stamp,count+1)
 
 async def bounded_json(request):
     data=bytearray()
@@ -127,45 +91,3 @@ async def extract_finance(payload):
             continue
     raise HTTPException(503,'ИИ временно недоступен или вернул неоднозначный результат. Можно внести операцию вручную.')
 
-@router.post('/finance/extract')
-async def finance_extract(request: Request):
-    uid,_=await staff_auth(request)
-    rate_limit(uid)
-    payload=await bounded_json(request)
-    return await extract_finance(payload)
-
-def supabase_rpc(name, payload, token):
-    req=URLRequest(SUPABASE_URL+'/rest/v1/rpc/'+name,data=json.dumps(payload).encode(),headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+token,'Content-Type':'application/json'},method='POST')
-    try:
-        with urlopen(req,timeout=15) as response:return json.load(response)
-    except (HTTPError,URLError,TimeoutError):
-        raise HTTPException(502,'Не удалось обновить очередь уведомлений') from None
-
-@router.post('/messages/dispatch')
-async def dispatch_messages(request: Request):
-    from uuid import uuid4
-    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
-    _,token=await staff_auth(request)
-    rows=await asyncio.to_thread(supabase_get,'/rest/v1/crm_message_queue?select=id&status=eq.queued&channel=eq.telegram&order=created_at.asc&limit=5',token)
-    outcomes=[]
-    for row in rows:
-        claim=str(uuid4())
-        messages=await asyncio.to_thread(supabase_rpc,'crm_claim_message',{'p_id':row['id'],'p_claim':claim},token)
-        if not messages:continue
-        message=messages[0]
-        status='unknown';error=None;provider_id=None
-        try:
-            chat=await request.app.state.bot.get_chat(int(message['destination']))
-            if chat.type!='private':
-                status='failed';error='Уведомления разрешены только в личный чат клиента'
-            else:
-                sent=await request.app.state.bot.send_message(chat_id=chat.id,text=message['message_text'],parse_mode=None)
-                status='sent';provider_id=str(sent.message_id)
-        except (TelegramBadRequest,TelegramForbiddenError,TelegramRetryAfter):
-            status='failed';error='Telegram отклонил отправку. Проверьте ID, запуск бота клиентом и блокировку бота.'
-        except Exception:
-            error='Ответ Telegram не получен. Не повторяйте отправку без проверки диалога.'
-        # If this acknowledgement fails, keep sending state: never blindly resend.
-        await asyncio.to_thread(supabase_rpc,'crm_finish_message',{'p_id':row['id'],'p_claim':claim,'p_status':status,'p_error':error,'p_provider_id':provider_id},token)
-        outcomes.append({'id':row['id'],'status':status})
-    return {'processed':outcomes}
