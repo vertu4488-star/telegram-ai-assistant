@@ -97,20 +97,33 @@ class RateLimitMiddleware(BaseMiddleware):
             self._user_timestamps[user_id] = timestamps
 
             if len(timestamps) >= self.limit:
+                rate_limited = True
                 last_warn = self._last_warning.get(user_id, 0.0)
-                if (now - last_warn) > self.notification_cooldown:
+                should_warn = (now - last_warn) > self.notification_cooldown
+                if should_warn:
                     self._last_warning[user_id] = now
-                    warning_text = (
-                        "⚠️ Вы отправляете сообщения слишком часто. "
-                        "Подождите немного и попробуйте снова."
-                    )
+            else:
+                rate_limited = False
+                should_warn = False
+                # Only record accepted events.
+                self._user_timestamps[user_id].append(now)
+
+        # Never hold the shared limiter lock while waiting for Telegram's API.
+        # A slow warning to one user must not delay everyone else's messages.
+        if rate_limited:
+            if should_warn:
+                warning_text = (
+                    "⚠️ Вы отправляете сообщения слишком часто. "
+                    "Подождите немного и попробуйте снова."
+                )
+                try:
                     if isinstance(event, Message):
                         await event.answer(warning_text)
                     elif isinstance(event, CallbackQuery):
                         await event.answer(warning_text, show_alert=True)
-                return  # Drop handling
-
-            # Record this event timestamp
-            self._user_timestamps[user_id].append(now)
+                except Exception:
+                    # A failed warning must not break the bot's update processing.
+                    logger.warning("Rate-limit warning delivery failed")
+            return None
 
         return await handler(event, data)
