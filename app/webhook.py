@@ -31,6 +31,18 @@ WEBHOOK_PATH = "/telegram/webhook"
 async def lifespan(app: FastAPI):
     setup_logging()
 
+    # Record only the database *type*, never its URL or credentials.
+    # Render free web services have no persistent filesystem by default.
+    storage_backend = settings.DATABASE_URL.split(":", 1)[0].split("+", 1)[0].lower()
+    if storage_backend == "sqlite":
+        logger.warning(
+            "BOT_STORAGE_RISK: SQLite backend detected. Local bot messages and "
+            "news publication records may be lost when Render replaces the instance. "
+            "Back up the existing data before switching to persistent PostgreSQL."
+        )
+    else:
+        logger.info("Bot storage backend initialized: %s (credentials omitted)", storage_backend)
+
     if not settings.TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
 
