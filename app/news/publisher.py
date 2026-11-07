@@ -35,8 +35,6 @@ FEEDS: tuple[tuple[str, str], ...] = (
     ("MacRumors", "https://feeds.macrumors.com/MacRumors-All"),
     ("9to5Mac", "https://9to5mac.com/feed/"),
     ("AppleInsider", "https://appleinsider.com/rss/news/"),
-    ("9to5Google", "https://9to5google.com/feed/"),
-    ("UploadVR", "https://www.uploadvr.com/rss/"),
 )
 
 KEYWORDS = (
@@ -61,7 +59,7 @@ DEVICE_RE = re.compile(
     r"apple watch|airpods|apple intelligence|samsung|galaxy|android|pixel|xiaomi|"
     r"oneplus|huawei|smartphone[s]?|smartwatch(?:es)?|foldable[s]?|"
     r"smart glasses|camera glasses|ray-ban meta|vision pro|wearable[s]?|"
-    r"earbuds|magsafe|usb-c|repairability|battery repair|phone repair)\b", re.I
+    r"magsafe|repairability|battery repair|phone repair)\b", re.I
 )
 
 def _on_topic(article: Article) -> bool:
@@ -83,10 +81,10 @@ EVERGREEN_TOPICS = (
     ("MacBook", "Что проверить перед покупкой подержанного MacBook: аккумулятор, дисплей, порты, блокировка активации и история ремонта.", "https://support.apple.com/mac"),
     ("Apple Watch", "Как продлить время работы Apple Watch: настройки экрана, фоновые обновления и проверка состояния аккумулятора.", "https://support.apple.com/watch"),
     ("USB-C", "Почему один кабель USB-C может заряжать устройство, а другой — нет: мощность адаптера, поддерживаемые режимы и состояние разъёмов.", "https://support.apple.com/"),
-    ("Samsung Galaxy", "Что проверить перед обновлением смартфона: резервную копию, свободную память, заряд аккумулятора и стабильность Wi-Fi.", "https://www.samsung.com/support/"),
+    ("iPad", "Перед обновлением iPadOS проверьте свободное место, резервную копию и заряд аккумулятора.", "https://support.apple.com/ipad"),
     ("Безопасность", "Почему важно устанавливать системные обновления и как проверить, доступна ли новая версия ОС для устройства.", "https://support.apple.com/"),
     ("Ремонт", "Почему симптомы неисправности не всегда указывают на конкретную микросхему: надёжная диагностика начинается с измерений и исключения простых причин.", "https://support.apple.com/"),
-    ("Покупка техники", "На что смотреть при выборе зарядного устройства: совместимость, заявленная мощность, качество кабеля и защита от перегрева.", "https://www.samsung.com/support/"),
+    ("Аксессуары Apple", "При выборе зарядного устройства для iPhone и iPad учитывайте совместимость, мощность адаптера и состояние кабеля.", "https://support.apple.com/"),
     ("Фото и видео", "Как освободить память телефона без потери важных снимков: резервное копирование, проверка синхронизации и удаление дубликатов.", "https://support.apple.com/"),
 )
 
@@ -291,6 +289,10 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
         raise RuntimeError("NEWS_CHANNEL_USERNAME is not configured")
     if not slot_key or len(slot_key) > 80:
         raise ValueError("A valid news publication slot key is required")
+
+    # Keep three scheduled channel posts a day. Extra Render cron slots are harmless.
+    if slot_key.rsplit("-", 1)[-1] not in {"10", "15", "20"}:
+        return {"status": "skipped_slot", "slot_key": slot_key}
 
     existing_slot = await _published_slot(slot_key)
     if existing_slot:
