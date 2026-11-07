@@ -35,6 +35,30 @@ jobs:
           python-version: '3.12'
       - name: Check Python syntax without contacting production services
         run: python -m compileall -q app
+      - name: Ensure rate limiter does not block unrelated users
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          tree = ast.parse(Path("app/bot/middlewares.py").read_text(encoding="utf-8"))
+          shared_locks = [
+              node for node in ast.walk(tree)
+              if isinstance(node, ast.AsyncWith)
+              and any(
+                  isinstance(child, ast.Attribute) and child.attr == "_lock"
+                  for item in node.items
+                  for child in ast.walk(item.context_expr)
+              )
+          ]
+          assert shared_locks, "Shared limiter lock was removed or renamed; review CI safety check"
+          for node in shared_locks:
+              if any(
+                  isinstance(child, ast.Await)
+                  for statement in node.body for child in ast.walk(statement)
+              ):
+                  raise AssertionError("Network or other awaits under the shared limiter lock can stall all users")
+          print("Telegram rate limiter lock safety: OK")
+          PY
       - name: Check webhook startup invariants
         run: |
           python - <<'PY'
