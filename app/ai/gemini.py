@@ -65,7 +65,7 @@ class GeminiService:
         """Try the primary model first, then automatically fail over to Gemini Flash-Lite."""
         if not self.api_key:
             logger.error("Gemini API key is not configured.")
-            return "⚠️ AI is not configured correctly. Please contact the administrator."
+            return "⚠️ ИИ-помощник временно недоступен. Обратитесь к специалисту сервиса."
 
         history = history_messages or []
         # Add the verified model-specific repair price reference only for price-related questions.
@@ -147,13 +147,13 @@ class GeminiService:
                 )
 
                 if status_code in (401, 403):
-                    return "⚠️ Gemini rejected the API credentials. Please contact the administrator."
+                    return "⚠️ ИИ-помощник временно недоступен. Обратитесь к специалисту сервиса."
 
                 retryable = status_code in (404, 429, 500, 502, 503, 504)
                 # On overload, unavailable model, or server error, continue to fallback model.
                 if retryable:
                     continue
-                return "⚠️ An error occurred while communicating with the AI service. Please try again later."
+                return "⚠️ Не удалось получить ответ ИИ. Пожалуйста, попробуйте ещё раз позже."
 
             except Exception as exc:
                 last_error = exc

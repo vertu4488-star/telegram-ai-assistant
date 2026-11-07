@@ -27,8 +27,8 @@ async def global_error_handler(event: ErrorEvent) -> bool:
     if event.update.message and isinstance(event.update.message, Message):
         try:
             await event.update.message.answer(
-                "⚠️ An unexpected error occurred while processing your message. "
-                "Please try again later."
+                "⚠️ При обработке сообщения возникла ошибка. "
+                "Попробуйте ещё раз немного позже."
             )
         except Exception:
             pass  # Suppress failure to notify user

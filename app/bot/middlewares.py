@@ -54,6 +54,7 @@ class RateLimitMiddleware(BaseMiddleware):
         self._user_timestamps: Dict[int, List[float]] = defaultdict(list)
         # Mapping: user_id -> last rate-limit warning timestamp
         self._last_warning: Dict[int, float] = {}
+        self._last_cleanup = time.time()
         self._lock = asyncio.Lock()
 
     async def __call__(
@@ -76,6 +77,21 @@ class RateLimitMiddleware(BaseMiddleware):
         window_start = now - 60.0
 
         async with self._lock:
+            # Reclaim idle-user state periodically; otherwise a long-running bot
+            # retains an entry for every user who ever contacted it.
+            if now - self._last_cleanup >= 300.0:
+                expired_ids = [
+                    uid for uid, events in self._user_timestamps.items()
+                    if not events or events[-1] <= window_start
+                ]
+                for uid in expired_ids:
+                    self._user_timestamps.pop(uid, None)
+                warning_cutoff = now - max(60.0, self.notification_cooldown)
+                for uid, last in list(self._last_warning.items()):
+                    if last <= warning_cutoff:
+                        self._last_warning.pop(uid, None)
+                self._last_cleanup = now
+
             # Clean timestamps older than 60s
             timestamps = [t for t in self._user_timestamps[user_id] if t > window_start]
             self._user_timestamps[user_id] = timestamps
@@ -85,8 +101,8 @@ class RateLimitMiddleware(BaseMiddleware):
                 if (now - last_warn) > self.notification_cooldown:
                     self._last_warning[user_id] = now
                     warning_text = (
-                        "⚠️ You're sending messages too quickly. "
-                        "Please wait a moment and try again."
+                        "⚠️ Вы отправляете сообщения слишком часто. "
+                        "Подождите немного и попробуйте снова."
                     )
                     if isinstance(event, Message):
                         await event.answer(warning_text)
