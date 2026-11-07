@@ -1,0 +1,29 @@
+name: Python dependency security audit
+
+on:
+  schedule:
+    - cron: '23 2 * * 1'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'requirements.txt'
+      - '.github/workflows/dependency-security.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Create isolated Python environment
+        run: python3 -m venv .auditvenv
+      - name: Install actual resolved dependencies and scanner
+        run: |
+          .auditvenv/bin/python -m pip install --upgrade pip
+          .auditvenv/bin/python -m pip install -r requirements.txt pip-audit
+      - name: Fail and notify on known installed-package vulnerabilities
+        run: .auditvenv/bin/pip-audit
