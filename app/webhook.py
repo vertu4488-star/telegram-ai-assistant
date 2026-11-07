@@ -7,7 +7,7 @@ import re
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from aiogram import Bot
@@ -90,6 +90,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="New iPhone Service", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["https://new-iphone-crm-preview.onrender.com"], allow_methods=["POST", "GET"], allow_headers=["Authorization", "Content-Type"])
+
+
+@app.head("/")
+async def root_probe():
+    """Allow health checkers to perform HEAD / without a spurious 405 error."""
+    return Response(status_code=200)
 
 
 @app.get("/")
