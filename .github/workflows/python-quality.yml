@@ -5,6 +5,7 @@ on:
       - 'app/**'
       - 'requirements.txt'
       - 'Dockerfile'
+      - 'scripts/migrate_sqlite_to_neon.py'
       - '.github/workflows/python-quality.yml'
   push:
     branches: [main]
@@ -12,6 +13,7 @@ on:
       - 'app/**'
       - 'requirements.txt'
       - 'Dockerfile'
+      - 'scripts/migrate_sqlite_to_neon.py'
       - '.github/workflows/python-quality.yml'
   workflow_dispatch:
 
@@ -35,7 +37,37 @@ jobs:
           python-version: '3.11'
           cache: pip
       - name: Check Python syntax without contacting production services
-        run: python -m compileall -q app
+        run: python -m compileall -q app scripts
+      - name: Test SQLite backup utility without connecting to real databases
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sqlite3
+          import subprocess
+          import sys
+          import tempfile
+
+          with tempfile.TemporaryDirectory() as folder:
+              source = Path(folder) / "bot.db"
+              backup = Path(folder) / "bot.backup.db"
+              with sqlite3.connect(source) as db:
+                  db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, telegram_id INTEGER, username TEXT, first_name TEXT, last_name TEXT, language_code TEXT, created_at TEXT, updated_at TEXT)")
+                  db.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, telegram_id INTEGER, role TEXT, content TEXT, created_at TEXT)")
+                  db.execute("CREATE TABLE published_news (id INTEGER PRIMARY KEY, slot_key TEXT, source_url TEXT, title TEXT, source_name TEXT, published_at TEXT, is_evergreen INTEGER)")
+                  db.execute("INSERT INTO users VALUES (1, 123, 'test', 'Test', NULL, 'ru', '2026-11-07 00:00:00', '2026-11-07 00:00:00')")
+              subprocess.run([sys.executable, "scripts/migrate_sqlite_to_neon.py",
+                              str(source), "--backup-out", str(backup), "--dry-run"], check=True)
+              assert backup.exists() and backup.stat().st_size > 0
+              with sqlite3.connect(backup) as check:
+                  assert check.execute("SELECT count(*) FROM users").fetchone()[0] == 1
+              attempt = subprocess.run(
+                  [sys.executable, "scripts/migrate_sqlite_to_neon.py",
+                   str(source), "--backup-out", str(backup), "--dry-run"],
+                  capture_output=True
+              )
+              assert attempt.returncode != 0, "Backup unexpectedly overwrote existing file"
+          print("Bot backup integrity and overwrite guard passed")
+          PY
       - name: Install production dependencies to catch packaging and import failures
         run: python -m pip install -r requirements.txt
       - name: Smoke-import production ASGI app without starting Telegram or contacting the database
