@@ -57,9 +57,10 @@ class Settings(BaseSettings):
         return self.ADMIN_USER_ID is not None and self.ADMIN_USER_ID == telegram_id
 
     def __repr__(self) -> str:
-        masked_token = f"{self.TELEGRAM_BOT_TOKEN[:4]}...{self.TELEGRAM_BOT_TOKEN[-4:]}" if len(self.TELEGRAM_BOT_TOKEN) > 8 else "***"
-        masked_key = f"{self.GEMINI_API_KEY[:4]}...{self.GEMINI_API_KEY[-4:]}" if len(self.GEMINI_API_KEY) > 8 else "***"
-        return f"<Settings model={self.GEMINI_MODEL!r} fallback_model={self.GEMINI_FALLBACK_MODEL!r} token={masked_token!r} gemini_key={masked_key!r} db={self.DATABASE_URL!r} admin={self.ADMIN_USER_ID}>"
+        backend = self.DATABASE_URL.split(":", 1)[0].split("+", 1)[0].lower()
+        return (f"<Settings model={self.GEMINI_MODEL!r} fallback_model={self.GEMINI_FALLBACK_MODEL!r} "
+                f"telegram_configured={bool(self.TELEGRAM_BOT_TOKEN)} gemini_configured={bool(self.GEMINI_API_KEY)} "
+                f"database_backend={backend!r} admin_configured={self.ADMIN_USER_ID is not None}>")
 
 
 settings = Settings()

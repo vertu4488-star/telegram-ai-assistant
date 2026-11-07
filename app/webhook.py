@@ -100,8 +100,22 @@ async def lifespan(app: FastAPI):
         await close_db()
 
 
-app = FastAPI(title="New iPhone Service", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="New iPhone Service", version="1.0.0", lifespan=lifespan,
+                 docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["https://new-iphone-crm-preview.onrender.com"], allow_methods=["POST", "GET"], allow_headers=["Authorization", "Content-Type"])
+
+@app.middleware("http")
+async def public_security_headers(request: Request, call_next):
+    # Every browser-facing response belongs to an API, never an embeddable page.
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 
 @app.head("/")
