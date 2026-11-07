@@ -1,0 +1,47 @@
+name: Telegram bot Python checks
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.github/workflows/python-quality.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.github/workflows/python-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bot-python-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Python syntax without contacting production services
+        run: python -m compileall -q app
+      - name: Check webhook startup invariants
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('app/webhook.py').read_text(encoding='utf-8')
+          assert 'TELEGRAM_WEBHOOK_SECRET' in source, 'Telegram webhook secret is missing'
+          assert 'hmac.compare_digest' in source, 'Webhook authentication must use constant-time compare'
+          assert 'Scheduled publishing is handled only by the dedicated Render Cron Job' in source
+          print('Static webhook startup protections verified')
+          PY
