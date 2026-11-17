@@ -223,7 +223,7 @@ async def _collect_articles() -> list[Article]:
 
 def _normalized_title(value: str) -> str:
     """Normalize punctuation/spacing so matching headlines from different feeds dedupe."""
-    return re.sub(r"\\W+", " ", html.unescape(value).casefold()).strip()
+    return re.sub(r"\W+", " ", html.unescape(value).casefold()).strip()
 
 
 def _normalized_url(value: str) -> str:
