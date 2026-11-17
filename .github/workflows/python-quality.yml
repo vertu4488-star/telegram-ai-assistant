@@ -70,6 +70,8 @@ jobs:
           PY
       - name: Install production dependencies to catch packaging and import failures
         run: python -m pip install -r requirements.txt
+      - name: Regression test Telegram news deduplication
+        run: python -m pytest -q tests/test_news_dedup.py
       - name: Smoke-import production ASGI app without starting Telegram or contacting the database
         run: |
           python - <<'PY'
