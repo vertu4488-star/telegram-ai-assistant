@@ -5,6 +5,8 @@ import asyncio
 import hashlib
 import html
 import logging
+import os
+from contextlib import asynccontextmanager
 import re
 import urllib.error
 import urllib.request
@@ -20,13 +22,37 @@ from aiogram import Bot
 from aiogram.types import LinkPreviewOptions
 from google.genai import types
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import settings
-from app.database.database import get_db_session
 from app.database.models import PublishedNews
 from app.ai.gemini import gemini_service
 
 logger = logging.getLogger(__name__)
+
+# News history is stored independently of the bot's legacy SQLite messages.
+# The bot conversation DATABASE_URL must not be switched before a safe backup.
+_news_sessionmaker = None
+
+
+@asynccontextmanager
+async def _news_db_session():
+    global _news_sessionmaker
+    if _news_sessionmaker is None:
+        url = os.getenv("NEWS_DATABASE_URL", "").strip()
+        if not url.startswith("postgresql+asyncpg://"):
+            raise RuntimeError("NEWS_DATABASE_URL must point to durable PostgreSQL; refusing to publish without deduplication")
+        engine = create_async_engine(url, pool_pre_ping=True)
+        _news_sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with _news_sessionmaker() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
 
 # Primary sources and established technology publications. We link to original
 # articles and rely on Telegram's native preview rather than re-uploading media.
@@ -195,19 +221,41 @@ async def _collect_articles() -> list[Article]:
     return sorted(unique.values(), key=lambda item: item.published_at, reverse=True)
 
 
-async def _already_published(url: str) -> bool:
-    async with get_db_session() as session:
-        row = await session.scalar(
-            select(PublishedNews.id).where(
-                PublishedNews.source_url == url,
-                PublishedNews.is_evergreen.is_(False),
-            ).limit(1)
+def _normalized_title(value: str) -> str:
+    """Normalize punctuation/spacing so matching headlines from different feeds dedupe."""
+    return re.sub(r"\\W+", " ", html.unescape(value).casefold()).strip()
+
+
+def _normalized_url(value: str) -> str:
+    """Remove tracking query strings, fragments, host case and trailing slashes."""
+    parsed = urlparse(value.strip())
+    host = parsed.netloc.lower().removeprefix("www.")
+    path = parsed.path.lower().rstrip("/")
+    return f"{host}{path}"
+
+
+def _already_published(article: Article, history: list[PublishedNews]) -> bool:
+    title = _normalized_title(article.title)
+    url = _normalized_url(article.url)
+    for item in history:
+        if title == _normalized_title(item.title):
+            return True
+        if not article.is_evergreen and not item.is_evergreen and url == _normalized_url(item.source_url):
+            return True
+    return False
+
+
+async def _recently_published() -> list[PublishedNews]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=60)
+    async with _news_db_session() as session:
+        rows = await session.scalars(
+            select(PublishedNews).where(PublishedNews.published_at >= cutoff)
         )
-        return row is not None
+        return list(rows)
 
 
 async def _published_slot(slot_key: str) -> Optional[PublishedNews]:
-    async with get_db_session() as session:
+    async with _news_db_session() as session:
         return await session.scalar(
             select(PublishedNews).where(PublishedNews.slot_key == slot_key).limit(1)
         )
@@ -306,6 +354,7 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
     if existing_slot:
         return {"status": "already_published", "slot_key": slot_key, "title": existing_slot.title}
 
+    history = await _recently_published()
     articles = await _collect_articles()
     topic_pattern = SLOT_TOPICS.get(slot_key.rsplit("-", 1)[-1])
     if topic_pattern:
@@ -313,22 +362,31 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
 
     article: Article | None = None
     for candidate in articles:
-        if not await _already_published(candidate.url):
+        if not _already_published(candidate, history):
             article = candidate
             break
 
     if article is None:
-        # Deterministic rotation ensures a useful post even on a quiet news day.
-        index = int(hashlib.sha256(slot_key.encode("utf-8")).hexdigest(), 16) % len(EVERGREEN_TOPICS)
-        category, advice, source_url = EVERGREEN_TOPICS[index]
-        article = Article(
-            source=f"Практика New iPhone Service · {category}",
-            title=f"{category}: полезный совет",
-            url=source_url,
-            summary=advice,
-            published_at=datetime.now(timezone.utc),
-            is_evergreen=True,
-        )
+        # Never recycle a practical tip just to meet a posting quota.
+        # Iterate from a stable per-slot starting point to keep variety.
+        start = int(hashlib.sha256(slot_key.encode("utf-8")).hexdigest(), 16) % len(EVERGREEN_TOPICS)
+        for offset in range(len(EVERGREEN_TOPICS)):
+            category, advice, source_url = EVERGREEN_TOPICS[(start + offset) % len(EVERGREEN_TOPICS)]
+            candidate = Article(
+                source=f"Практика New iPhone Service · {category}",
+                title=f"{category}: полезный совет",
+                url=source_url,
+                summary=advice,
+                published_at=datetime.now(timezone.utc),
+                is_evergreen=True,
+            )
+            if not _already_published(candidate, history):
+                article = candidate
+                break
+
+    if article is None:
+        logger.info("No unused news or tips for %s; skipping rather than reposting", slot_key)
+        return {"status": "no_fresh_content", "slot_key": slot_key}
 
     # A second guard prevents future selection changes from bypassing editorial policy.
     if not article.is_evergreen and not _on_topic(article):
@@ -338,16 +396,13 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
     source_line = f"\n\nИсточник: {article.source}\n{article.url}"
     final_text = (post_text + source_line)[:3900]
 
-    await bot.send_message(
-        chat_id=settings.NEWS_CHANNEL_USERNAME,
-        text=final_text,
-        parse_mode=None,
-        link_preview_options=LinkPreviewOptions(is_disabled=False, prefer_large_media=True),
-    )
-
-    async with get_db_session() as session:
-        session.add(
-            PublishedNews(
+    # Reserve the unique slot in Neon BEFORE sending to Telegram.
+    # If Telegram times out after accepting a post, a retry must not repost it.
+    # We prefer a missed slot over a duplicate if delivery outcome is uncertain.
+    async with _news_db_session() as session:
+        claim = (
+            insert(PublishedNews)
+            .values(
                 slot_key=slot_key,
                 source_url=article.url,
                 title=article.title[:500],
@@ -355,7 +410,22 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
                 published_at=datetime.now(timezone.utc),
                 is_evergreen=article.is_evergreen,
             )
+            .on_conflict_do_nothing(index_elements=["slot_key"])
+            .returning(PublishedNews.id)
         )
+        if await session.scalar(claim) is None:
+            return {"status": "already_published", "slot_key": slot_key}
+
+    try:
+        await bot.send_message(
+            chat_id=settings.NEWS_CHANNEL_USERNAME,
+            text=final_text,
+            parse_mode=None,
+            link_preview_options=LinkPreviewOptions(is_disabled=False, prefer_large_media=True),
+        )
+    except Exception:
+        logger.exception("Telegram delivery uncertain for claimed news slot %s; not retrying to avoid duplicates", slot_key)
+        raise
 
     logger.info(
         "News post published: slot=%s source=%s evergreen=%s title=%s",
