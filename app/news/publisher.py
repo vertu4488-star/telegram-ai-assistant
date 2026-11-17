@@ -346,8 +346,8 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
     if not slot_key or len(slot_key) > 80:
         raise ValueError("A valid news publication slot key is required")
 
-    # Keep three scheduled channel posts a day. Extra Render cron slots are harmless.
-    if slot_key.rsplit("-", 1)[-1] not in {"10", "15", "20"}:
+    # Publish in each of the five configured Render Cron slots, unless no fresh content exists.
+    if slot_key.rsplit("-", 1)[-1] not in {"10", "12", "15", "17", "20"}:
         return {"status": "skipped_slot", "slot_key": slot_key}
 
     existing_slot = await _published_slot(slot_key)
@@ -443,7 +443,7 @@ async def publish_next_news(bot: Bot, slot_key: str) -> dict[str, object]:
 async def run_news_scheduler(bot: Bot) -> None:
     """Best-effort in-process scheduler; Render Cron can call the same publisher reliably."""
     timezone_local = ZoneInfo("Asia/Novosibirsk")
-    scheduled_hours = (10, 15, 20)
+    scheduled_hours = (10, 12, 15, 17, 20)
     logger.info("In-process news scheduler started (Asia/Novosibirsk, slots=%s)", scheduled_hours)
     while True:
         try:
