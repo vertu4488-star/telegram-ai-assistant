@@ -2,7 +2,8 @@
 """One-time, fail-closed SQLite -> PostgreSQL copy for New iPhone Service.
 
 Only run with access to the live bot.db file after suspending new bot updates.
-Requires the destination Neon DB tables to exist and be empty.
+Requires the destination Neon users/messages tables to exist and be empty.
+The existing published_news table in Neon is preserved without changes.
 Never prints database credentials or message contents.
 The source is never deleted or modified.
 """
@@ -21,6 +22,9 @@ TABLES = {
                        "source_name", "published_at", "is_evergreen"),
 }
 DATES = {"created_at", "updated_at", "published_at"}
+# News is already durable in Neon. Migrate only the legacy conversation
+# tables; never reset, overwrite, or duplicate the publication ledger.
+CHAT_TABLES = ("users", "messages")
 
 
 def safe_datetime(value):
@@ -88,13 +92,14 @@ async def copy_to_postgres(data, dsn):
                 "LOCK TABLE public.users, public.messages, public.published_news "
                 "IN ACCESS EXCLUSIVE MODE"
             )
-            for table in TABLES:
+            for table in CHAT_TABLES:
                 existing = await conn.fetchval("SELECT COUNT(*) FROM public." + table)
                 if existing:
                     raise RuntimeError(
                         "Target has data in " + table + "; not overwriting or merging"
                     )
-            for table, fields in TABLES.items():
+            for table in CHAT_TABLES:
+                fields = TABLES[table]
                 columns = ", ".join(fields)
                 params = ", ".join("$" + str(i) for i in range(1, len(fields) + 1))
                 query = "INSERT INTO public." + table + " (" + columns + ") VALUES (" + params + ")"
@@ -130,7 +135,7 @@ def main():
     if not dsn:
         raise RuntimeError("BOT_MIGRATION_DATABASE_URL is missing; backup kept")
     asyncio.run(copy_to_postgres(data, dsn))
-    print("Migration committed and verified. Backup kept; switch the bot only after review.")
+    print("Chat migration committed and verified. Existing Neon news untouched. Backup kept; switch the bot only after review.")
 
 
 if __name__ == "__main__":
