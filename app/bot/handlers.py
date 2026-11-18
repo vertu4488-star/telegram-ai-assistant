@@ -2,13 +2,20 @@
 
 import asyncio
 import logging
+import hashlib
+import os
+import sqlite3
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from sqlalchemy.engine.url import make_url
 from typing import List, Optional
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, FSInputFile
 
 from app.ai.gemini import gemini_service
 from app.bot.keyboards import get_main_inline_keyboard, get_new_chat_confirm_keyboard
@@ -286,6 +293,71 @@ async def handle_about(message: Message) -> None:
 # ---------------------------------------------------------------------------
 # Admin Handlers
 # ---------------------------------------------------------------------------
+
+
+def _make_private_sqlite_backup() -> tuple[Path, dict[str, int], str]:
+    """Make a consistent, owner-only backup without exposing database contents in logs."""
+    url = make_url(settings.DATABASE_URL)
+    if not url.drivername.startswith("sqlite") or not url.database or url.database == ":memory:":
+        raise RuntimeError("The conversation database is not a local SQLite file")
+    source = Path(url.database)
+    if not source.is_file():
+        raise RuntimeError("Live SQLite database file was not found")
+    fd, name = tempfile.mkstemp(prefix="new-iphone-bot-backup-", suffix=".db")
+    os.close(fd)
+    target = Path(name)
+    try:
+        with sqlite3.connect(f"file:{source.resolve()}?mode=ro", uri=True) as active:
+            with sqlite3.connect(target) as snapshot:
+                active.backup(snapshot)
+                if snapshot.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                    raise RuntimeError("SQLite snapshot integrity check failed")
+                counts = {}
+                for table in ("users", "messages", "published_news"):
+                    counts[table] = int(snapshot.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+        if target.stat().st_size > 48 * 1024 * 1024:
+            raise RuntimeError("SQLite backup exceeds the Telegram bot file limit")
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        return target, counts, digest
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+
+
+@router.message(Command("backup"))
+async def handle_backup(message: Message) -> None:
+    """Export the live chat database only to the private chat of the configured owner."""
+    user = message.from_user
+    if (user is None or user.id != OWNER_TELEGRAM_ID
+            or message.chat.type != "private"):
+        await message.answer("⛔ Резервное копирование доступно только владельцу в личном чате.")
+        return
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        await message.answer("✅ История уже подключена к постоянному PostgreSQL; файл SQLite не используется.")
+        return
+    target: Path | None = None
+    try:
+        target, counts, digest = await asyncio.to_thread(_make_private_sqlite_backup)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        caption = (
+            "🔐 Резервная копия базы бота New iPhone Service.\n"
+            f"Пользователей: {counts['users']}; сообщений: {counts['messages']}; "
+            f"новостей в локальной копии: {counts['published_news']}.\n"
+            f"SHA-256: {digest}\n"
+            "Храните файл приватно и не пересылайте посторонним."
+        )
+        await message.answer_document(
+            FSInputFile(str(target), filename=f"new-iphone-bot-{stamp}.db"),
+            caption=caption,
+            parse_mode=None,
+        )
+        logger.info("Owner-only SQLite backup delivered (message/user counts only)")
+    except Exception:
+        logger.exception("Owner SQLite backup failed without exposing database contents")
+        await message.answer("⚠️ Не удалось создать копию базы. Смену хранилища пока нельзя считать безопасной.")
+    finally:
+        if target is not None:
+            target.unlink(missing_ok=True)
 
 
 @router.message(Command("stats"))
