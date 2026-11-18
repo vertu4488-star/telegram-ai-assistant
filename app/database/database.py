@@ -26,10 +26,14 @@ def get_engine(database_url: str | None = None) -> AsyncEngine:
     global _engine
     if _engine is None:
         url = database_url or settings.DATABASE_URL
+        # Neon may suspend idle computes; a pooled connection may go stale
+        # while the Render web service sleeps. Validate it before reuse.
         _engine = create_async_engine(
             url,
             echo=False,
             future=True,
+            pool_pre_ping=True,
+            pool_recycle=300,
         )
     return _engine
 
