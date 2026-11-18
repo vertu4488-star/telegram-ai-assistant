@@ -8,6 +8,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from sqlalchemy import text
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from aiogram import Bot
@@ -19,7 +20,7 @@ from app.crm_api import extract_finance, bounded_json
 from app.crm_assistant import interpret_crm_command
 from app.bot.commands import setup_bot_commands
 from app.config import settings
-from app.database.database import close_db, init_db
+from app.database.database import close_db, init_db, get_db_session
 from app.logging_config import setup_logging
 from app.main import build_dispatcher
 
@@ -132,6 +133,44 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.get("/ready")
+async def ready(request: Request):
+    """Live readiness: database + Telegram webhook, not just a running web process.
+
+    The lightweight /health remains available for Render's own liveness checks.
+    This endpoint deliberately reports degraded while chat history is on
+    ephemeral SQLite. Never expose database URLs or Telegram credentials.
+    """
+    if not getattr(request.app.state, "bot", None):
+        raise HTTPException(status_code=503, detail="bot_not_started")
+    backend = settings.DATABASE_URL.split(":", 1)[0].split("+", 1)[0].lower()
+    if backend not in ("postgresql", "postgres"):
+        raise HTTPException(status_code=503, detail="persistent_chat_storage_not_configured")
+    try:
+        async def db_ping():
+            async with get_db_session() as session:
+                await session.execute(text("SELECT 1"))
+        await asyncio.wait_for(db_ping(), timeout=6.0)
+    except Exception:
+        logger.warning("Readiness failed: persistent chat database unavailable")
+        raise HTTPException(status_code=503, detail="chat_database_unavailable") from None
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="ai_key_not_configured")
+    expected = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/") + WEBHOOK_PATH
+    try:
+        webhook_info = await asyncio.wait_for(
+            request.app.state.bot.get_webhook_info(), timeout=6.0
+        )
+        if not expected.startswith("https://") or webhook_info.url != expected:
+            raise HTTPException(status_code=503, detail="telegram_webhook_not_active")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Readiness failed: Telegram webhook verification unavailable")
+        raise HTTPException(status_code=503, detail="telegram_webhook_unavailable") from None
+    return {"status": "ready", "chat_storage": "postgresql", "telegram_webhook": "active"}
 
 
 @app.post(WEBHOOK_PATH)
