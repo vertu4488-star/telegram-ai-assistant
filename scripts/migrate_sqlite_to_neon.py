@@ -89,7 +89,7 @@ async def copy_to_postgres(data, dsn):
         async with conn.transaction():
             # Atomic migration and a guard against accidental duplicate imports.
             await conn.execute(
-                "LOCK TABLE public.users, public.messages, public.published_news "
+                "LOCK TABLE public.users, public.messages "
                 "IN ACCESS EXCLUSIVE MODE"
             )
             for table in CHAT_TABLES:
