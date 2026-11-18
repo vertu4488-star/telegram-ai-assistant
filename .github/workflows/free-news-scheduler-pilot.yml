@@ -1,0 +1,62 @@
+name: Telegram news scheduler — free GitHub Actions pilot
+# Deliberately MANUAL-ONLY until the existing Render Cron job is safely retired.
+# Do not enable 'schedule' while Render Cron is active.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Send a real post for the current Novosibirsk slot (false = health check only)'
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: new-iphone-news-github-pilot
+  cancel-in-progress: false
+jobs:
+  check-and-optional-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check production bot readiness without sending messages
+        run: |
+          python - <<'PY'
+          import json, time, urllib.error, urllib.request
+          url = 'https://new-iphone-service.onrender.com/health'
+          for attempt in range(1, 5):
+              try:
+                  req = urllib.request.Request(url, headers={'User-Agent':'NewIphoneNewsGithubPilot/1.0'})
+                  with urllib.request.urlopen(req, timeout=40) as response:
+                      payload = json.load(response)
+                  if payload.get('status') != 'healthy':
+                      raise RuntimeError('Health payload is not healthy')
+                  print('Production bot health verified')
+                  break
+              except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError):
+                  if attempt == 4:
+                      raise
+                  time.sleep(15)
+          PY
+      - name: Check configured GitHub Actions secret without printing it
+        id: ready
+        env:
+          NEWS_PUBLISH_SECRET: ${{ secrets.NEWS_PUBLISH_SECRET }}
+        shell: bash
+        run: |
+          if [ -n "$NEWS_PUBLISH_SECRET" ]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::NEWS_PUBLISH_SECRET is missing in repository Actions secrets. No post will be sent.'
+          fi
+      - name: Send one production channel post only with explicit manual approval
+        if: ${{ inputs.publish && steps.ready.outputs.configured == 'true' }}
+        env:
+          PUBLISH_URL: https://new-iphone-service.onrender.com/news/publish-next
+          NEWS_PUBLISH_SECRET: ${{ secrets.NEWS_PUBLISH_SECRET }}
+        run: python scripts/publish_news_cron.py
